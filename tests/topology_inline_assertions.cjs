@@ -9,10 +9,18 @@ async function inlineSnapshot(page) {
     const visible = node => Boolean(node && node.getClientRects().length && getComputedStyle(node).display !== "none" && getComputedStyle(node).visibility !== "hidden" && !node.closest("[hidden]"));
     return {box: rect(graph), floating: graph.querySelectorAll("[data-topology-edge-label], .topology-edge-label").length,
       nodes: [...graph.querySelectorAll("[data-topology-node]")].map(node => {
-        const ports = node.querySelector("[data-topology-node-ports]"), marker = node.querySelector(".topology-node-selected"), more = node.querySelector(".topology-node-ports-more"), rates = node.querySelector(".topology-node-rates");
+        const ports = node.querySelector("[data-topology-node-ports]"), marker = node.querySelector(".topology-node-selected"), peerMarker = node.querySelector(".topology-node-peer"), more = node.querySelector(".topology-node-ports-more"), rates = node.querySelector(".topology-node-rates");
+        const name = node.querySelector("strong"), heightWithBadge = node.offsetHeight, peerWasHidden = peerMarker?.hidden;
+        if (visible(peerMarker)) { peerMarker.hidden = true; }
+        const heightWithoutBadge = node.offsetHeight;
+        if (peerMarker) peerMarker.hidden = peerWasHidden;
         return {id: node.dataset.topologyNode, selected: node.getAttribute("aria-pressed") === "true", box: rect(node), aria: node.getAttribute("aria-label") || "",
           name: rect(node.querySelector("strong")), state: rect(node.querySelector(".topology-node-state")),
           marker: {visible: visible(marker), text: marker?.textContent, box: marker ? rect(marker) : null},
+          peerMarker: {exists: Boolean(peerMarker), visible: visible(peerMarker), text: peerMarker?.textContent || "", box: peerMarker ? rect(peerMarker) : null,
+            clipped: peerMarker ? peerMarker.scrollWidth > peerMarker.clientWidth + 1 : false},
+          heightWithBadge, heightWithoutBadge, nameFont: parseFloat(getComputedStyle(name).fontSize), nameEllipsis: getComputedStyle(name).textOverflow,
+          nameText: name.textContent, title: node.title,
           rates: {exists: Boolean(rates), visible: visible(rates), text: rates?.textContent || "", box: rates ? rect(rates) : null,
             font: rates ? parseFloat(getComputedStyle(rates).fontSize) : null, clipped: rates ? rates.scrollWidth > rates.clientWidth + 1 : false},
           ports: {exists: Boolean(ports), visible: visible(ports), title: ports?.getAttribute("title") || "", box: ports ? rect(ports) : null,
@@ -32,13 +40,22 @@ function geometryFindings(snapshot, fit = true) {
     if (fit && outside(node.box, snapshot.box)) findings.push({kind: "card-outside-canvas", node: node.id});
     for (const [kind, box] of [["name", node.name], ["state", node.state]]) if (outside(box, node.box)) findings.push({kind: kind + "-outside-own-card", node: node.id});
     for (const other of snapshot.nodes.slice(index + 1)) if (overlaps(node.box, other.box)) findings.push({kind: "cards-overlap", nodes: [node.id, other.id]});
-    if (node.marker.visible) {
-      if (outside(node.marker.box, node.box)) findings.push({kind: "current-outside-own-card", node: node.id});
-      for (const [kind, box] of [["name", node.name], ["state", node.state]]) if (overlaps(node.marker.box, box)) findings.push({kind: "current-covers-" + kind, node: node.id});
+    if (fit) {
+      const painted = item => { const spread = item.peerMarker?.visible ? 4 : 0; return {left: item.box.left - spread, right: item.box.right + spread, top: item.box.top - spread, bottom: item.box.bottom + spread}; };
+      if (outside(painted(node), snapshot.box)) findings.push({kind: "peer-ring-outside-canvas", node: node.id});
+      for (const other of snapshot.nodes.slice(index + 1)) if ((node.peerMarker?.visible || other.peerMarker?.visible) && overlaps(painted(node), painted(other))) {
+        findings.push({kind: "peer-rings-overlap", nodes: [node.id, other.id]});
+      }
+    }
+    const markers = [["current", node.marker], ["peer", node.peerMarker]].filter(([, marker]) => marker?.visible);
+    if (markers.length > 1) findings.push({kind: "current-and-peer-both-visible", node: node.id});
+    for (const [role, marker] of markers) {
+      if (outside(marker.box, node.box)) findings.push({kind: role + "-outside-own-card", node: node.id});
+      for (const [kind, box] of [["name", node.name], ["state", node.state]]) if (overlaps(marker.box, box)) findings.push({kind: role + "-covers-" + kind, node: node.id});
     }
     if (node.rates.visible) {
       if (outside(node.rates.box, node.box)) findings.push({kind: "rates-outside-own-card", node: node.id});
-      for (const [kind, box] of [["name", node.name], ["state", node.state], ...(node.marker.visible ? [["current", node.marker.box]] : [])]) {
+      for (const [kind, box] of [["name", node.name], ["state", node.state], ...markers.map(([role, marker]) => [role, marker.box])]) {
         if (overlaps(node.rates.box, box)) findings.push({kind: "rates-cover-" + kind, node: node.id});
       }
       if (node.rates.clipped) findings.push({kind: "rates-clipped", node: node.id, text: node.rates.text});
@@ -47,7 +64,7 @@ function geometryFindings(snapshot, fit = true) {
     if (node.ports.more.visible) items.push({kind: "more", ...node.ports.more});
     for (const [lineIndex, line] of items.entries()) {
       if (outside(line.box, node.box)) findings.push({kind: "port-outside-own-card", node: node.id, text: line.text});
-      for (const [kind, box] of [["name", node.name], ["state", node.state], ...(node.marker.visible ? [["current", node.marker.box]] : []), ...(node.rates.visible ? [["rates", node.rates.box]] : [])]) {
+      for (const [kind, box] of [["name", node.name], ["state", node.state], ...markers.map(([role, marker]) => [role, marker.box]), ...(node.rates.visible ? [["rates", node.rates.box]] : [])]) {
         if (overlaps(line.box, box)) findings.push({kind: "port-covers-" + kind, node: node.id, text: line.text});
       }
       for (const other of items.slice(lineIndex + 1)) if (overlaps(line.box, other.box)) findings.push({kind: "port-rows-overlap", node: node.id});
@@ -101,6 +118,14 @@ async function assertInlinePorts(page, links, selectedId, direction, overview = 
   for (const node of snapshot.nodes) {
     const link = expected.find(link => (direction === "forward" ? link.target : link.source) === node.id);
     const scopes = link?.scopes || [];
+    assert.ok(node.peerMarker.exists, "each node has one direction-aware peer marker");
+    assert.equal(node.peerMarker.visible, Boolean(link), "only confirmed peers display a role marker; overview/current/unknown/disabled/unrelated do not");
+    assert.equal(node.peerMarker.text, link ? direction === "forward" ? "目标" : "来源" : "", "peer role text follows direction and is cleared on every non-peer");
+    assert.ok(!(node.marker.visible && node.peerMarker.visible), "current and counterpart roles are mutually exclusive");
+    assert.equal(node.peerMarker.clipped, false, "the two-character counterpart badge is not truncated");
+    assert.equal(node.heightWithBadge, node.heightWithoutBadge, "counterpart role uses the existing first row and never increases card height");
+    assert.ok(node.nameFont >= 13 && node.nameEllipsis === "ellipsis", "badges cannot be paid for by shrinking name text or wrapping cards taller");
+    assert.ok(node.aria.includes(node.nameText) && node.title.includes(node.nameText), "the complete name remains available when the compact header is truncated");
     assert.ok(node.ports.exists, "each card has its inline port container");
     assert.deepEqual(node.ports.lines.map(line => line.scope), scopes.slice(0, 2), "card scopes preserve every directed authorization, including leaf-to-leaf access without a path, with no stale ports");
     assert.deepEqual(node.ports.lines.map(line => line.text), scopes.slice(0, 2).map(compactScope), "the visible compact scope never changes its protocol or port values");

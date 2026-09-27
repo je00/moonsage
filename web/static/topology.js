@@ -318,7 +318,9 @@
   }
   function sizeCanvas() {
     const rows = Math.ceil((snapshot.nodes.length - 1) / 2);
-    const height = Math.max(480, Math.min(960, rows * (layoutHeight() + 20) + (graph.clientWidth < 520 ? 160 : 80)));
+    // Cards stay readable at a fixed size while the world zooms. Capping the
+    // canvas height squeezes dense rows until their target rings collide.
+    const height = Math.max(480, rows * (layoutHeight() + 20) + (graph.clientWidth < 520 ? 160 : 80));
     graph.style.height = `${height}px`;
   }
   function syncPositions(rearrange = false) {
@@ -457,6 +459,9 @@
       const kind = button.querySelector("[data-topology-node-kind]");
       kind.textContent = node.kind === "hub" ? "中心网关" : node.kind.toUpperCase();
       button.querySelector(".topology-node-selected").hidden = !chosen || displayMode !== "relations";
+      const peerMarker = button.querySelector(".topology-node-peer");
+      peerMarker.hidden = !peer;
+      peerMarker.textContent = peer ? direction === "forward" ? "目标" : "来源" : "";
       const ports = button.querySelector("[data-topology-node-ports]");
       ports.replaceChildren();
       ports.hidden = !scopes.length;
@@ -528,8 +533,9 @@
       const dot = element("span", "topology-node-dot"); dot.setAttribute("aria-hidden", "true");
       const ports = element("span", "topology-node-ports"); ports.dataset.topologyNodePorts = "";
       const selected = element("span", "topology-node-selected", "当前"); selected.setAttribute("aria-hidden", "true");
+      const peer = element("span", "topology-node-peer"); peer.hidden = true; peer.setAttribute("aria-hidden", "true");
       const state = element("span", "topology-node-state"), kind = element("span"); kind.dataset.topologyNodeKind = ""; state.append(kind);
-      button.append(dot, element("strong", "", node.name), state, selected);
+      button.append(dot, element("strong", "", node.name), state, selected, peer);
       if (node.kind !== "hub") {
         button.dataset.telemetryNode = node.id; button.dataset.telemetryCompact = "true";
         const activity = element("span", "topology-node-activity"); activity.dataset.telemetryStatus = "";

@@ -17,7 +17,8 @@ assert.equal(projected.status, 0, projected.stderr || "Python projection failed"
 const packet = JSON.parse(projected.stdout);
 assert.equal(packet.generated_by, "dashboard.topology.build_topology");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "server-kit-topology-permissions-"));
-const report = {directory, projector: packet.generated_by, checks: [], screenshots: [], peerStyles: [], layoutFindings: [], requests: [], errors: [], external: []};
+const quick = process.env.TOPOLOGY_QA_QUICK === "1";
+const report = {directory, quick, projector: packet.generated_by, checks: [], screenshots: [], peerStyles: [], focusStyles: [], layoutFindings: [], requests: [], errors: [], external: []};
 const topologyURL = new URL("network/topology/", base).href;
 const hook = (page, name) => page.locator(`[data-topology-${name}]`);
 const isJSON = url => url.origin === base.origin && url.pathname === "/network/topology/" && url.searchParams.get("format") === "json";
@@ -55,11 +56,16 @@ async function assertPeers(page, model, direction, overview = false) {
   const expected = overview ? [] : model.links.filter(link => direction === "forward" ? link.source === model.selected_id : link.target === model.selected_id)
     .map(link => direction === "forward" ? link.target : link.source).sort();
   const nodes = await hook(page, "node").evaluateAll(items => items.map(node => ({id: node.dataset.topologyNode,
-    peer: node.dataset.topologyPeer || null, classPeer: node.classList.contains("is-peer"), selected: node.getAttribute("aria-pressed") === "true"})));
+    peer: node.dataset.topologyPeer || null, classPeer: node.classList.contains("is-peer"), selected: node.getAttribute("aria-pressed") === "true",
+    badge: node.querySelector(".topology-node-peer")?.textContent,
+    badgeVisible: !!node.querySelector(".topology-node-peer:not([hidden])"),
+    currentVisible: !!node.querySelector(".topology-node-selected:not([hidden])")})));
   assert.deepEqual(nodes.filter(node => node.classPeer).map(node => node.id).sort(), expected, "peer frames preserve every authorized counterpart, including leaf-to-leaf permissions without paths");
   assert.deepEqual(nodes.filter(node => node.peer).map(node => node.id).sort(), expected, "peer metadata is removed from every unrelated, inactive, unknown, and selected node");
   assert.ok(nodes.filter(node => node.classPeer).every(node => !node.selected && node.peer === (direction === "forward" ? "outbound" : "inbound")),
     "a selected node is never its own peer, and the frame records the correct access direction");
+  assert.deepEqual(nodes.filter(node => node.badgeVisible).map(node => node.id).sort(), expected, "the visible role badges match the full confirmed peer set exactly");
+  assert.ok(nodes.every(node => !node.badgeVisible || node.badge === (direction === "forward" ? "目标" : "来源") && !node.currentVisible), "role words follow direction and never coexist with current");
 }
 
 async function peerStyles(page, engine, width, theme, caseName) {
@@ -83,19 +89,26 @@ async function peerStyles(page, engine, width, theme, caseName) {
       return values[0] * .2126 + values[1] * .7152 + values[2] * .0722;
     };
     const contrast = (a, b) => { const first = luminance(a), second = luminance(b); return (Math.max(first, second) + .05) / (Math.min(first, second) + .05); };
+    const panelBackground = background(document.querySelector(".topology-panel"));
     return nodes.filter(node => node.classList.contains("is-peer") || node.getAttribute("aria-pressed") === "true").map(node => {
       const style = getComputedStyle(node), bg = background(node), name = node.querySelector("strong"), state = node.querySelector(".topology-node-state");
       const marker = node.querySelector(".topology-node-selected:not([hidden])"), markerBackground = marker ? background(marker) : null;
+      const peer = node.querySelector(".topology-node-peer:not([hidden])"), peerBackground = peer ? background(peer) : null;
       const color = rgba(style.borderTopColor);
       return {id: node.dataset.topologyNode, kind: node.classList.contains("kind-awg") ? "awg" : node.classList.contains("kind-vless") ? "vless" : "hub",
-        selected: node.getAttribute("aria-pressed") === "true", stateColor: getComputedStyle(state).color,
+        selected: node.getAttribute("aria-pressed") === "true", peer: node.classList.contains("is-peer"), stateColor: getComputedStyle(state).color,
         border: style.borderTopColor, background: style.backgroundColor, effectiveBackground: bg, color: blend(color, bg), width: parseFloat(style.borderTopWidth), height: node.getBoundingClientRect().height,
+        shadow: style.boxShadow, shadowColors: (style.boxShadow.match(/(?:rgba?\([^)]*\)|color\([^)]*\))/g) || []).map(rgba), zIndex: Number(style.zIndex), panelBackground, animation: style.animationName,
+        outerFrameContrast: contrast(blend(color, panelBackground), panelBackground), innerFrameContrast: contrast(blend(color, bg), bg),
+        fillDifference: Math.hypot(...bg.map((channel, index) => channel - panelBackground[index])),
+        peerContrast: peer ? contrast(blend(rgba(getComputedStyle(peer).color), peerBackground), peerBackground) : null,
         portContrasts: [...node.querySelectorAll(".topology-node-port")].map(port => contrast(blend(rgba(getComputedStyle(port).color), bg), bg)),
         rateContrasts: [...node.querySelectorAll(".topology-node-rates")].map(rate => contrast(blend(rgba(getComputedStyle(rate).color), bg), bg)),
         currentContrast: marker ? contrast(blend(rgba(getComputedStyle(marker).color), markerBackground), markerBackground) : null,
         nameContrast: contrast(blend(rgba(getComputedStyle(name).color), bg), bg), stateContrast: contrast(blend(rgba(getComputedStyle(state).color), bg), bg)};
     });
   });
+  report.peerStyles.push({engine, width, theme, case: caseName, nodes: styles});
   for (const item of styles) {
     assert.ok(item.width >= 2, `${engine}/${width}/${theme}/${item.id}: peer frame is at least 2 CSS px`);
     assert.ok(item.nameContrast >= 4.5, `${engine}/${width}/${theme}/${item.id}: name text contrast ${item.nameContrast.toFixed(2)} is readable`);
@@ -103,6 +116,21 @@ async function peerStyles(page, engine, width, theme, caseName) {
     assert.ok(item.portContrasts.every(value => value >= 4.5), "inline protocol/port text meets normal-text contrast");
     assert.ok(item.rateContrasts.every(value => value >= 4.5), "the new rate row meets normal-text contrast without masking permission scopes");
     if (item.currentContrast !== null) assert.ok(item.currentContrast >= 4.5, "current-node marker meets normal-text contrast");
+    if (item.peer) {
+      assert.ok(item.peerContrast >= 4.5, `${engine}/${width}/${theme}/${item.id}: counterpart badge contrast ${item.peerContrast?.toFixed(2)} is readable`);
+      assert.ok(item.outerFrameContrast >= 3 && item.innerFrameContrast >= 3, `${engine}/${width}/${theme}/${item.id}: double type frame contrasts with both separating panel and tinted card`);
+      assert.ok(item.fillDifference >= 15, "counterpart card tint differs visibly from unrelated panel-colored cards");
+      assert.match(item.shadow, /0px 0px 0px 2px/, "a separating panel-colored ring is present");
+      assert.match(item.shadow, /0px 0px 0px 4px/, "a second outer type-colored ring is present");
+      assert.ok(item.shadowColors.length >= 2 && Math.hypot(...item.shadowColors[0].slice(0, 3).map((value, index) => value - item.panelBackground[index])) < 2,
+        "the gap between the type frames uses the opaque panel color, including the sky theme");
+      assert.ok(Math.hypot(...item.shadowColors[1].slice(0, 3).map((value, index) => value - item.color[index])) < 2,
+        "the outer ring preserves the node's AWG/VLESS/VPS color, not a generic accent");
+      assert.equal(item.zIndex, 8, "counterparts retain priority over the current observation node");
+      assert.equal(item.animation, "none", "highlighting never adds a continuously moving or pulsing animation");
+    } else {
+      assert.doesNotMatch(item.shadow, /0px 0px 0px 4px/, "the current node is not mislabeled with the counterpart double ring");
+    }
     if (item.selected) assert.equal(item.border, item.stateColor, "selected card uses its own type color, not an unrelated warm frame");
     const [red, green, blue] = item.color;
     if (item.kind === "awg") assert.ok(blue > red + 15 && green > red, "AWG peers use a recognizable blue frame");
@@ -114,7 +142,40 @@ async function peerStyles(page, engine, width, theme, caseName) {
     const distance = Math.hypot(...byKind[first].color.map((value, channel) => value - byKind[second].color[channel]));
     assert.ok(distance >= 45, "different node kinds have visibly distinct peer-frame colors");
   }
-  report.peerStyles.push({engine, width, theme, case: caseName, nodes: styles});
+}
+
+async function focusAndSearch(page, model, engine, width, theme) {
+  const targetId = model.links.find(link => link.source === model.selected_id && link.target !== "hub").target;
+  const targetName = model.nodes.find(node => node.id === targetId).name;
+  const target = page.locator(`[data-topology-node="${targetId}"]`);
+  await hook(page, "view-options").locator("summary").click();
+  await hook(page, "search").fill(targetName);
+  await settle(page);
+  const searchStyle = await target.evaluate(node => {
+    const style = getComputedStyle(node);
+    return {matched: node.classList.contains("is-match"), outline: style.outlineStyle, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset), shadow: style.boxShadow};
+  });
+  assert.ok(searchStyle.matched && searchStyle.outline === "dashed" && searchStyle.width >= 2 && searchStyle.offset >= 4,
+    "search adds a distinct dashed outline outside, not in place of, the peer ring");
+  assert.match(searchStyle.shadow, /0px 0px 0px 4px/, "search never erases the double counterpart ring");
+  await page.keyboard.press("Tab");
+  await target.focus();
+  const focusStyle = await target.evaluate(node => {
+    const style = getComputedStyle(node);
+    return {visible: node.matches(":focus-visible"), outline: style.outlineStyle, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset), shadow: style.boxShadow, zIndex: Number(style.zIndex)};
+  });
+  assert.ok(focusStyle.visible && focusStyle.outline === "solid" && focusStyle.width >= 2 && focusStyle.offset >= 4,
+    "keyboard focus remains a distinct solid outline even on a search-matched counterpart");
+  assert.equal(focusStyle.zIndex, 10, "keyboard focus remains above peers and the current node");
+  assert.match(focusStyle.shadow, /0px 0px 0px 4px/);
+  await hook(page, "search").fill("");
+  await hook(page, "view-options").locator("summary").click();
+  await hook(page, "fit").click();
+  await page.evaluate(() => document.activeElement?.blur());
+  await settle(page);
+  assert.equal(await target.evaluate(node => node.classList.contains("is-match")), false, "clearing search removes only the search hint");
+  assert.equal(await target.locator(".topology-node-peer:not([hidden])").innerText(), "目标", "search/focus never alter the permission counterpart role");
+  report.focusStyles.push({engine, width, theme, targetId, searchStyle, focusStyle});
 }
 
 async function overview(page, model, requests) {
@@ -233,7 +294,8 @@ async function scenario(browser, engine, width) {
         const initial = cardSizes.find(node => node.id === actual.id);
         assert.ok(Math.abs(actual.width - initial.width) < .5, "card width stays fixed while height adapts to its visible contents");
       }
-      await peerStyles(page, engine, width, theme, name);
+      try { await peerStyles(page, engine, width, theme, name); }
+      catch (error) { await capture(page, `${engine}-${width}-${theme}-${name}-style-failure.png`); throw error; }
       await capture(page, `${engine}-${width}-${theme}-${name}.png`);
     }
     const allModel = packet.models["vless:phone-all"], partialModel = packet.models["vless:phone-ports"], nasModel = packet.models["vless:phone-nas"], hubModel = packet.models.hub, nasTargetModel = packet.models["awg:nas-primary"];
@@ -248,6 +310,7 @@ async function scenario(browser, engine, width) {
       assert.equal(await hook(page, "graph").locator(".is-peer").count(), 8, "all eight authorized targets remain framed");
       assert.equal(await hook(page, "inspector").locator("[data-topology-access-target]").count(), 8);
       assert.ok(allModel.links.filter(link => link.source === allModel.selected_id).every(link => link.scopes.length === 1 && link.scopes[0] === "全部协议 · 全部端口"));
+      await focusAndSearch(page, allModel, engine, width, theme);
       await inspect(allModel, "reverse", 0, theme, "phone-all-reverse");
       await overview(page, allModel, requests);
       await select(page, partialModel.selected_id);
@@ -298,7 +361,7 @@ async function scenario(browser, engine, width) {
 
 (async () => {
   try {
-    for (const [engine, factory] of [["chromium", chromium], ["webkit", webkit]]) {
+    for (const [engine, factory] of quick ? [["webkit", webkit]] : [["chromium", chromium], ["webkit", webkit]]) {
       const browser = await factory.launch();
       try {
         const anonymous = await browser.newContext();
@@ -306,7 +369,7 @@ async function scenario(browser, engine, width) {
           const response = await anonymous.request.get(topologyURL + "?format=json", {maxRedirects: 0});
           assert.ok([302, 401, 403].includes(response.status()), "topology requires authentication");
         } finally { await anonymous.close(); }
-        for (const width of [1440, 320, 390]) await scenario(browser, engine, width);
+        for (const width of quick ? [320] : [1440, 320, 390]) await scenario(browser, engine, width);
       } finally { await browser.close(); }
     }
     assert.deepEqual(report.errors, []);

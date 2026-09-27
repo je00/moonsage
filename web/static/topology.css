@@ -81,13 +81,15 @@
 .topology-node-dot { display: block; grid-column: 1; grid-row: 2; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .topology-node strong { display: block; grid-column: 1 / -1; grid-row: 1; min-width: 0; margin: 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .topology-node-state { display: block; grid-column: 2 / -1; grid-row: 2; min-width: 0; overflow: hidden; color: var(--topology-type-color); font-size: 11px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.topology-node-selected { display: block; grid-column: 3; grid-row: 1; padding: 1px 4px; border-radius: .2rem; color: var(--topology-on-type); background: var(--topology-type-color); font-size: 11px; font-weight: 700; line-height: 14px; white-space: nowrap; }
+.topology-node-selected, .topology-node-peer { display: block; grid-column: 3; grid-row: 1; padding: 1px 4px; border-radius: .2rem; color: var(--topology-on-type); background: var(--topology-type-color); font-size: 11px; font-weight: 700; line-height: 14px; white-space: nowrap; }
 .topology-node-ports { display: grid; grid-column: 1 / -1; grid-row: 4; align-content: start; gap: 0; min-width: 0; padding-top: 1px; border-top: 1px solid var(--line); }
 .topology-node-port { display: block; min-width: 0; overflow: hidden; color: var(--text); font: 12px/14px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: -.2px; text-overflow: ellipsis; white-space: nowrap; }
 .topology-node-port > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topology-node-ports-more { display: block; min-width: 0; overflow: hidden; color: var(--text-soft); font-size: 11px; line-height: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .topology-node:hover { border-color: var(--topology-type-color); }
-.topology-world[data-mode="relations"] .topology-node.is-peer:not([aria-pressed="true"]) { border-width: 2px; border-color: var(--topology-type-color); background: var(--panel); background: color-mix(in srgb, var(--topology-type-color) 10%, var(--panel)); }
+.topology-world[data-mode="relations"] .topology-node:not(.is-peer):not([aria-pressed="true"]) { border-color: var(--line); background: var(--panel); box-shadow: none; }
+.topology-world[data-mode="relations"] .topology-node.is-peer:not([aria-pressed="true"]) { border-width: 2px; border-color: var(--topology-type-color); background: var(--panel); background: color-mix(in srgb, var(--topology-type-color) 14%, var(--panel)); box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--topology-type-color), 0 4px 12px var(--shadow); }
+.topology-world[data-mode="relations"] .topology-node.is-peer strong { grid-column: 1 / 3; font-weight: 750; }
 .topology-world[data-mode="relations"] .topology-node[aria-pressed="true"] { border-width: 2px; border-color: var(--topology-type-color); background: var(--panel); background: color-mix(in srgb, var(--topology-type-color) 14%, var(--panel)); }
 .topology-world[data-mode="relations"] .topology-node[aria-pressed="true"] strong { color: var(--topology-type-color); font-weight: 750; }
 .topology-world[data-mode="relations"] .topology-node[aria-pressed="true"] strong { grid-column: 1 / 3; }
@@ -148,7 +150,7 @@
 .topology-legend-node { --topology-type-color: var(--topology-outbound); display: inline-block; width: 1.15rem; height: .8rem; border: 1px solid var(--topology-type-color); border-radius: .2rem; background: var(--panel); background: color-mix(in srgb, var(--topology-type-color) 10%, var(--panel)); }
 .topology-legend-node.kind-vless { --topology-type-color: var(--topology-inbound); }
 .topology-legend-node.kind-hub { --topology-type-color: var(--topology-hub); }
-.topology-legend-peer { display: inline-block; width: 1.15rem; height: .8rem; border: 2px solid var(--text-soft); border-radius: .2rem; }
+.topology-legend-peer { display: inline-block; width: 1.15rem; height: .8rem; margin-inline: 2px; border: 2px solid var(--text-soft); border-radius: .2rem; box-shadow: 0 0 0 1px var(--panel), 0 0 0 2px var(--text-soft); }
 .topology-graph-note { margin: 0; padding: .3rem 1rem .85rem; color: var(--muted); font-size: .7rem; line-height: 1.6; }
 .topology-noscript { margin: 1rem 1.5rem 1.5rem; color: var(--muted); font-size: .8rem; }
 .topology-warnings .alert { font-size: .78rem; }
