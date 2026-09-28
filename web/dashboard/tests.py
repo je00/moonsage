@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import re
-import io
 import json
 import base64
 import copy
 import tempfile
 import time
-import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -552,12 +550,15 @@ class DashboardTests(TestCase):
         self.assertContains(response, "不要排除")
         self.assertContains(response, "设置 → 隧道 → 跳过路由")
         self.assertContains(response, "10.0.0.0/8")
-        self.assertContains(response, "下载全平台脚本包", count=4)
-        self.assertContains(response, "菜单操作：", count=4)
-        self.assertContains(response, "进入菜单后按提示", count=4)
-        self.assertContains(response, "双击 windows\\server-kit-ssh.cmd", count=1)
-        self.assertContains(response, "sudo bash ./linux/server-kit-node-linux.sh", count=8)
-        self.assertContains(response, "sudo zsh ./macos/server-kit-ssh.sh", count=1)
+        self.assertNotContains(response, "下载全平台脚本包")
+        self.assertContains(response, "无需解压")
+        self.assertContains(response, "菜单操作：")
+        self.assertContains(response, "进入菜单后按提示")
+        self.assertContains(response, "server-kit-ssh.cmd")
+        self.assertContains(response, "sudo bash ./server-kit-node-linux.sh")
+        self.assertContains(response, "sudo zsh ./server-kit-ssh.sh")
+        for obsolete_path in ("windows\\server-kit-ssh.cmd", "./linux/server-kit-node-linux.sh", "./macos/server-kit-ssh.sh"):
+            self.assertNotContains(response, obsolete_path)
         self.assertContains(response, "自动识别同目录的主/备两份配置", count=1)
         self.assertContains(response, "启用主入口并设置开机自启", count=1)
         self.assertContains(response, "按需安装 Git、Vim、Codex、Claude Code、OpenClaw、Hermes、tmux、Mosh 和 Docker", count=1)
@@ -565,8 +566,8 @@ class DashboardTests(TestCase):
         self.assertContains(response, "将中文用户目录切换为英文", count=1)
         self.assertContains(response, "userdirs-english --yes", count=1)
         self.assertContains(response, "开关自启", count=1)
-        self.assertContains(response, "linux/server-kit-node-linux.sh lid-ignore", count=1)
-        self.assertContains(response, "linux/server-kit-node-linux.sh lid-default", count=1)
+        self.assertContains(response, "./server-kit-node-linux.sh lid-ignore", count=1)
+        self.assertContains(response, "./server-kit-node-linux.sh lid-default", count=1)
         self.assertContains(response, "Windows 会自动连接吗？", count=1)
         self.assertContains(response, "启动类型应为“自动”", count=1)
         self.assertContains(response, "会保留 5 分钟自动回滚", count=3)
@@ -574,7 +575,8 @@ class DashboardTests(TestCase):
         self.assertContains(response, "查看监听/端口/防火墙/公钥/密码认证", count=3)
         self.assertContains(response, "安全启用仅公钥认证", count=3)
         self.assertContains(response, "SSH 管理（可选）", count=3)
-        self.assertContains(response, 'class="guide-step-kind"', count=23)
+        self.assertContains(response, "SSH 管理（Termux，可选）", count=1)
+        self.assertContains(response, 'class="guide-step-kind"', count=24)
         self.assertContains(response, 'class="guide-safety-grid"', count=1)
         self.assertContains(response, "不要只用 Ping 判断", count=1)
         self.assertNotContains(response, "不知道选哪种节点")
@@ -582,15 +584,14 @@ class DashboardTests(TestCase):
         self.assertNotContains(response, "官方安装链接")
         self.assertNotContains(response, "以后需要更换 SSH 密钥")
         self.assertNotContains(response, "自动化调用：不打开菜单")
-        self.assertNotContains(response, "下载后双击")
         self.assertNotContains(response, "复制启动命令")
         self.assertNotContains(response, "SSH 综合管理菜单")
         self.assertNotContains(response, "登录其他设备")
         self.assertNotContains(response, "允许登录本机")
         self.assertNotContains(response, 'data-sshd-port')
         self.assertNotContains(response, 'data-sshd-enable-command-template')
-        self.assertContains(response, reverse("sshd-script-archive-download"), count=4)
-        self.assertContains(response, reverse("linux-node-script-download"), count=2)
+        self.assertNotContains(response, reverse("sshd-script-archive-download"))
+        self.assertContains(response, reverse("linux-node-script-download"))
         self.assertContains(
             response,
             "wget http://testserver"
@@ -598,7 +599,7 @@ class DashboardTests(TestCase):
             count=1,
         )
         for platform in ("windows", "macos", "android"):
-            self.assertNotContains(response, reverse("sshd-script-download", args=[platform]))
+            self.assertContains(response, reverse("sshd-script-download", args=[platform]))
         for platform in ("linux", "macos", "android"):
             self.assertNotContains(response, f'id="cmd-{platform}-sshd-menu"')
         self.assertNotContains(response, "powershell -ExecutionPolicy Bypass -File")
@@ -630,10 +631,11 @@ class DashboardTests(TestCase):
         linux_node_step = html.split('id="guide-linux-node"', 1)[1].split("</li>", 1)[0]
         linux_script_url = reverse("linux-node-script-download")
         self.assertIn(linux_script_url, linux_node_step)
-        self.assertIn("直接运行 Linux 综合脚本进入菜单", linux_node_step)
+        self.assertIn("Linux 综合脚本", linux_node_step)
+        self.assertIn("进入菜单", linux_node_step)
         self.assertIn("安装或更新 AWG，并导入双入口配置", linux_node_step)
-        self.assertIn("sudo bash ./linux/server-kit-node-linux.sh", linux_node_step)
-        self.assertIn("sudo bash ./linux/server-kit-node-linux.sh awg-install ./linux", linux_node_step)
+        self.assertIn("sudo bash ./server-kit-node-linux.sh", linux_node_step)
+        self.assertIn("sudo bash ./server-kit-node-linux.sh awg-install .", linux_node_step)
         iphone_node = html.split('id="guide-iphone-node"', 1)[1].split("</li>", 1)[0]
         iphone_subscription = html.split('id="guide-iphone-subscription"', 1)[1].split("</li>", 1)[0]
         android_node = html.split('id="guide-android-node"', 1)[1].split("</li>", 1)[0]
@@ -642,6 +644,26 @@ class DashboardTests(TestCase):
         self.assertIn("Stash", iphone_subscription)
         self.assertNotIn("guide-step-apps", android_node)
         self.assertIn("FlClash", android_subscription)
+
+        panels = {
+            platform: html.split(f'id="guide-panel-{platform}"', 1)[1].split("</section>", 1)[0]
+            for platform in ("windows", "linux", "macos", "iphone", "android")
+        }
+        for platform in ("windows", "linux", "macos", "android"):
+            panel = panels[platform]
+            expected_script = reverse("sshd-script-download", args=[platform])
+            if platform == "linux":
+                self.assertTrue(expected_script in panel or linux_script_url in panel)
+            else:
+                self.assertIn(expected_script, panel)
+            for other in {"windows", "linux", "macos", "android"} - {platform}:
+                self.assertNotIn(reverse("sshd-script-download", args=[other]), panel)
+        for platform in ("windows", "linux", "macos", "android"):
+            self.assertNotIn(reverse("sshd-script-download", args=[platform]), panels["iphone"])
+        self.assertIn("AWG 内网地址", panels["android"])
+        self.assertIn("VLESS 不提供入站 SSH", panels["android"])
+        for desktop_only in ("5 分钟自动回滚", "安全启用仅公钥认证", "每 30 秒", "每分钟", "允许来源网段"):
+            self.assertNotIn(desktop_only, panels["android"])
 
         js_path = Path(__file__).resolve().parents[1] / "static" / "app.js"
         js = js_path.read_text(encoding="utf-8")
@@ -732,31 +754,74 @@ class DashboardTests(TestCase):
             self.assertIn("no-store", response["Cache-Control"])
 
     def test_sshd_manager_download_requires_login_and_rejects_unknown_platform(self) -> None:
-        url = reverse("sshd-script-download", args=["macos"])
-        response = self.client.get(url)
-        self.assertRedirects(response, f"{reverse('login')}?next={url}")
+        for platform in ("windows", "linux", "macos", "android"):
+            with self.subTest(platform=platform):
+                url = reverse("sshd-script-download", args=[platform])
+                response = self.client.get(url)
+                self.assertRedirects(response, f"{reverse('login')}?next={url}")
         self.client.force_login(self.viewer)
-        self.assertEqual(self.client.get(reverse("sshd-script-download", args=["unknown"])).status_code, 404)
+        for platform in ("unknown", "iphone", "WINDOWS", "windows.zip", ".."):
+            with self.subTest(platform=platform):
+                self.assertEqual(self.client.get(reverse("sshd-script-download", args=[platform])).status_code, 404)
+        self.assertEqual(self.client.get("/guides/nodes/sshd/..%2Fwindows/download/").status_code, 404)
 
-    def test_all_platform_script_archive_requires_login_and_contains_every_platform(self) -> None:
+    @patch("dashboard.views.SshScriptBundle", side_effect=AssertionError("The retired archive must not generate scripts"))
+    def test_retired_script_archive_requires_login_and_redirects_to_platform_choices(self, _bundle) -> None:
         url = reverse("sshd-script-archive-download")
         response = self.client.get(url)
         self.assertRedirects(response, f"{reverse('login')}?next={url}")
 
         self.client.force_login(self.viewer)
         response = self.client.get(url)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response["Content-Type"], "application/zip")
-        self.assertIn("server-kit-node-scripts.zip", response["Content-Disposition"])
-        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            self.assertEqual(set(archive.namelist()), {
-                "README.txt",
-                "windows/server-kit-ssh.cmd",
-                "linux/server-kit-node-linux.sh",
-                "macos/server-kit-ssh.sh",
-                "android-termux/server-kit-ssh.sh",
-            })
+        self.assertRedirects(response, reverse("node-deployment-guide"), fetch_redirect_response=False)
+        self.assertNotEqual(response["Content-Type"], "application/zip")
+        self.assertNotIn("Content-Disposition", response)
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
         self.assertIn("no-store", response["Cache-Control"])
+
+    def test_platform_script_responses_are_standalone_not_cross_platform_archives(self) -> None:
+        self.client.force_login(self.viewer)
+        expected = {
+            "windows": ("server-kit-ssh.cmd", "text/plain; charset=utf-8", "# server-kit Windows SSH 综合管理器"),
+            "linux": ("server-kit-node-linux.sh", "text/x-shellscript; charset=utf-8", "# server-kit Linux 节点综合管理器"),
+            "macos": ("server-kit-ssh.sh", "text/x-shellscript; charset=utf-8", "# server-kit macOS SSH 综合管理器"),
+            "android": ("server-kit-ssh.sh", "text/x-shellscript; charset=utf-8", "# server-kit Termux SSH 综合管理器"),
+        }
+        for platform, (filename, content_type, header) in expected.items():
+            with self.subTest(platform=platform):
+                response = self.client.get(reverse("sshd-script-download", args=[platform]))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["Content-Type"], content_type)
+                self.assertEqual(response["Content-Disposition"], f'attachment; filename="{filename}"')
+                self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+                self.assertIn("no-store", response["Cache-Control"])
+                self.assertFalse(response.content.startswith(b"PK\x03\x04"))
+                script = response.content.decode("utf-8")
+                self.assertIn(header, script)
+                for other, (_, _, other_header) in expected.items():
+                    if other != platform:
+                        self.assertNotIn(other_header, script)
+                if platform == "android":
+                    for desktop_only in ("auth-harden", "auth-confirm", "network-add", "New-ScheduledTask", "launchctl"):
+                        self.assertNotIn(desktop_only, script)
+                elif platform == "linux":
+                    for capability in ("awg-install", "ssh-menu", "devtools-install", "userdirs-english", "lid-ignore"):
+                        self.assertIn(capability, script)
+                    self.assertEqual(response.content, self.client.get(reverse("linux-node-script-download")).content)
+
+    def test_unavailable_selected_script_is_a_404_not_a_partial_download(self) -> None:
+        self.client.force_login(self.viewer)
+        for platform in ("windows", "linux", "macos", "android"):
+            for error in (FileNotFoundError("missing fixture"), RuntimeError("invalid fixture contract")):
+                with self.subTest(platform=platform, error=type(error).__name__), patch(
+                    "dashboard.views.SshScriptBundle.download", side_effect=error,
+                ):
+                    response = self.client.get(reverse("sshd-script-download", args=[platform]))
+                    self.assertEqual(response.status_code, 404)
+                    self.assertNotIn("Content-Disposition", response)
+        self.client.logout()
+        with patch("dashboard.views.SshScriptBundle.download", side_effect=FileNotFoundError("missing fixture")):
+            self.assertEqual(self.client.get(reverse("linux-node-script-download")).status_code, 404)
 
     def test_linux_node_manager_combines_awg_install_and_ssh(self) -> None:
         self.client.force_login(self.viewer)

@@ -103,8 +103,8 @@ Socket 默认路径为 `/run/server-kit/manager.sock`，所有者为 `root:serve
 
 - `lib/server_kit_port_facts.py` 是端口事实的唯一 module：负责一次采集、结构校验、范围分类、连续端口压缩、防火墙集合和 CLI/网页投影。Shell 脚本只提供路径与系统命令 adapter。
 - `control_plane/read_model.py` 按页面意图组合主机快照、服务清单及附加资源，声明响应版本和短期新鲜度；网页不再决定需要执行几次主机采集。
-- `web/dashboard/ssh_scripts.py` 定义 SSH 综合管理器的共同动作契约，Windows、Linux、macOS 和 Termux 文件只实现操作系统差异。
-- `web/dashboard/deployment_guide.py` 固定“安装软件 → 创建节点 → 发布订阅 → 配置隧道 → 验证”的接入旅程，桌面平台额外接入同一 SSH 管理步骤。
+- `web/dashboard/ssh_scripts.py` 定义 SSH 管理器的共同动作契约；Windows、Linux、macOS 和 Termux 各自下载单文件，无需解压。旧全平台包链接转回平台选择页。
+- `web/dashboard/deployment_guide.py` 定义节点接入旅程，按设备提供 SSH 管理步骤。Termux 需另有 AWG 内网地址；VLESS 不提供入站 SSH。
 
 这些边界均保留旧代理的滚动升级 adapter；新代码只调用上述深层接口，不再新增并行解析路径。
 

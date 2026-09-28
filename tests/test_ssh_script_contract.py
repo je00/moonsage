@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import re
 import os
-import io
 import shutil
 import subprocess
 import unittest
-import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from web.dashboard.ssh_scripts import (
     ADAPTERS,
@@ -69,28 +68,60 @@ class SshScriptContractTests(unittest.TestCase):
         for action in LINUX_NODE_ACTIONS:
             self.assertIn(action, script)
 
-    def test_all_platform_archive_contains_each_validated_download(self) -> None:
+    def test_platform_selection_reads_only_the_requested_platform_templates(self) -> None:
         root = Path(__file__).resolve().parents[1] / "web" / "dashboard" / "script_templates"
         bundle = SshScriptBundle(root)
-        download = bundle.download_all()
+        read_bytes, read_text = Path.read_bytes, Path.read_text
+        for platform, adapter in ADAPTERS.items():
+            with self.subTest(platform=platform):
+                allowed = {adapter.template}
+                if platform == "linux":
+                    allowed.update({"server-kit-awg-linux.sh", "server-kit-devtools-linux.sh", "server-kit-userdirs-linux.sh"})
+                accessed = set()
 
-        self.assertEqual(download.filename, "server-kit-node-scripts.zip")
-        self.assertEqual(download.content_type, "application/zip")
-        with zipfile.ZipFile(io.BytesIO(download.payload)) as archive:
-            expected = {
-                "windows/server-kit-ssh.cmd": "windows",
-                "linux/server-kit-node-linux.sh": "linux",
-                "macos/server-kit-ssh.sh": "macos",
-                "android-termux/server-kit-ssh.sh": "android",
-            }
-            self.assertEqual(set(archive.namelist()), {"README.txt", *expected})
-            readme = archive.read("README.txt").decode("utf-8")
-            self.assertIn("选择自己的系统目录", readme)
-            self.assertIn("不带子命令直接运行时都会打开交互菜单", readme)
-            self.assertIn("开发工具", readme)
-            for member, platform in expected.items():
-                self.assertEqual(archive.read(member), bundle.download(platform).payload)
-                self.assertEqual((archive.getinfo(member).external_attr >> 16) & 0o777, 0o755)
+                def check_read(method, script_path, *args, **kwargs):
+                    self.assertEqual(script_path.parent, root)
+                    self.assertIn(script_path.name, allowed, "A different platform must not be read or packaged")
+                    accessed.add(script_path.name)
+                    return method(script_path, *args, **kwargs)
+
+                def checked_read_bytes(script_path, *args, **kwargs):
+                    return check_read(read_bytes, script_path, *args, **kwargs)
+
+                def checked_read_text(script_path, *args, **kwargs):
+                    return check_read(read_text, script_path, *args, **kwargs)
+
+                with (
+                    patch.object(Path, "read_bytes", autospec=True, side_effect=checked_read_bytes),
+                    patch.object(Path, "read_text", autospec=True, side_effect=checked_read_text),
+                ):
+                    download = bundle.download(platform)
+                self.assertEqual(accessed, allowed)
+                self.assertEqual(download.filename, adapter.filename)
+                self.assertNotEqual(download.content_type, "application/zip")
+                self.assertFalse(download.payload.startswith(b"PK\x03\x04"))
+        self.assertFalse(hasattr(bundle, "download_all"), "The retired all-platform packaging API must not remain")
+
+    def test_single_windows_file_keeps_its_complete_elevated_launcher(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "web" / "dashboard" / "script_templates"
+        payload = SshScriptBundle(root).download("windows").payload
+        self.assertTrue(payload.startswith(b"@echo off\r\n"))
+        self.assertNotIn(b"\n", payload.replace(b"\r\n", b""))
+        script = payload.decode("utf-8")
+        self.assertEqual(script.count("###SERVER_KIT_POWERSHELL###"), 1)
+        launcher, powershell = script.split("###SERVER_KIT_POWERSHELL###", 1)
+        for required in ("-Verb RunAs", "SERVER_KIT_CALLER_PROFILE", "SERVER_KIT_TEMP_PS", "New-Object Text.UTF8Encoding($true)"):
+            self.assertIn(required, launcher)
+        self.assertTrue(powershell.lstrip("\r\n").startswith("# server-kit Windows SSH 综合管理器"))
+
+    def test_termux_download_keeps_its_narrow_runtime_capabilities(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "web" / "dashboard" / "script_templates"
+        script = SshScriptBundle(root).download("android").payload.decode("utf-8")
+        self.assertTrue(script.startswith("#!/data/data/com.termux/files/usr/bin/bash\n"))
+        self.assertIn("只监听 AWG 地址", script)
+        self.assertIn("Termux 被系统结束或手机重启后需重新启用", script)
+        for unsupported in (*SSH_AUTH_ACTIONS, *SSH_NETWORK_ACTIONS, "###SERVER_KIT_AWG_PAYLOAD###", "###SERVER_KIT_POWERSHELL###"):
+            self.assertNotIn(unsupported, script)
 
     def test_desktop_platforms_expose_end_to_end_authentication_hardening(self) -> None:
         self.assertTrue(all(ADAPTERS[name].auth_hardening for name in ("windows", "linux", "macos")))

@@ -30,6 +30,21 @@ class DeploymentJourneyTests(unittest.TestCase):
         self.assertIn("Stash", str(guides["iphone"].steps[1]["apps"]))
         self.assertIn("FlClash", str(guides["android"].steps[1]["apps"]))
 
+    def test_termux_is_an_optional_android_step_not_an_iphone_or_vless_capability(self) -> None:
+        guides = {guide.platform: guide for guide in build_deployment_journey()}
+        android = guides["android"]
+        self.assertEqual(android.badge, "VLESS")
+        self.assertEqual([step["role"] for step in android.steps], ["node", "subscription", "tunnel", "verify", "ssh"])
+        ssh = android.steps[-1]
+        self.assertEqual(ssh["platform"], "android")
+        self.assertEqual(ssh["kind"], "可选")
+        self.assertIn("Termux", ssh["title"])
+        self.assertIn("AWG 内网地址", str(ssh))
+        self.assertIn("VLESS 不提供入站 SSH", str(ssh))
+        for desktop_claim in ("允许来源网段", "5 分钟自动回滚", "安全启用仅公钥认证"):
+            self.assertNotIn(desktop_claim, str(ssh))
+        self.assertNotIn("ssh", [step["role"] for step in guides["iphone"].steps])
+
 
 if __name__ == "__main__":
     unittest.main()

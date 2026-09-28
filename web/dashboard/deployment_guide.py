@@ -46,7 +46,7 @@ def _manager_step(
     node = role == "node"
     if platform == "linux" and node:
         text = (
-            "先下载主/备两个入口配置和全平台脚本包。解压后直接运行 Linux 综合脚本进入菜单，"
+            "先下载主/备两个入口配置和 Linux 综合脚本，放在同一目录。直接运行脚本进入菜单，"
             "选择“安装或更新 AWG，并导入双入口配置”；脚本会自动安装 AmneziaWG、导入配置并启用主入口。"
         )
     elif vless and node:
@@ -72,9 +72,22 @@ def _manager_step(
 
 
 def _ssh_step(platform: str) -> dict[str, object]:
+    termux = platform == "android"
     return {
-        "role": "ssh", "kind": "可选", "type": "ssh", "title": "SSH 管理（可选）",
-        "text": "脚本可安装 SSH、调整端口和允许来源网段、管理公钥；关闭密码认证时会保留 5 分钟自动回滚。", "platform": platform,
+        "role": "ssh", "kind": "可选", "type": "ssh",
+        "title": "SSH 管理（Termux，可选）" if termux else "SSH 管理（可选）",
+        "text": (
+            "仅供已安装 Termux 的设备使用。需另有 AWG 内网地址；VLESS 不提供入站 SSH。"
+            if termux else
+            "脚本可安装 SSH、调整端口和允许来源网段、管理公钥；关闭密码认证时会保留 5 分钟自动回滚。"
+        ),
+        "platform": platform,
+        "download_label": {
+            "windows": "下载 Windows SSH 脚本",
+            "linux": "下载 Linux 综合脚本",
+            "macos": "下载 macOS SSH 脚本",
+            "android": "下载 Termux SSH 脚本",
+        }[platform],
     }
 
 
@@ -117,6 +130,7 @@ def build_deployment_journey() -> tuple[PlatformGuide, ...]:
             _manager_step("android", "subscription", apps=_apps("flclash-android"), vless=True),
             {"role": "tunnel", "kind": "导入", "type": "text", "title": "启用订阅", "text": "打开“FlClash → 配置 → 从 URL 导入”，粘贴链接并启用。"},
             {"role": "verify", "kind": "验证", "type": "text", "title": "确认授权生效", "text": "连接已授权的 10.20.0.x。已授权设备应能连接，未授权设备必须失败。"},
+            _ssh_step("android"),
         )),
     )
     _validate_journey(guides)

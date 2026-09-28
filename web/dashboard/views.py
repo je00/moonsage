@@ -385,14 +385,10 @@ def sshd_script_download(request, platform):
 @login_required
 @never_cache
 def sshd_script_archive_download(request):
-    """一次下载所有受支持平台的节点管理脚本。"""
-    try:
-        download = SshScriptBundle(
-            Path(__file__).resolve().parent / "script_templates"
-        ).download_all()
-    except (OSError, RuntimeError) as error:
-        raise Http404("节点管理脚本包暂不可用") from error
-    return _script_download_response(download)
+    """旧脚本包链接回到平台选择页，不再生成全平台压缩包。"""
+    response = redirect("node-deployment-guide")
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def _sensitive_unlocked(request) -> bool:

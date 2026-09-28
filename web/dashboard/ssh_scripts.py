@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import io
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -302,50 +300,6 @@ class SshScriptBundle:
                 + script.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
             )
         return SshScriptDownload(payload, adapter.filename, adapter.content_type)
-
-    def download_all(self) -> SshScriptDownload:
-        """把所有平台的已校验脚本打包为一个可分发的 ZIP。"""
-        members = (
-            ("windows", "windows/server-kit-ssh.cmd"),
-            ("linux", "linux/server-kit-node-linux.sh"),
-            ("macos", "macos/server-kit-ssh.sh"),
-            ("android", "android-termux/server-kit-ssh.sh"),
-        )
-        readme = """server-kit 节点脚本包
-
-选择自己的系统目录：
-- windows：Windows SSH 综合管理脚本
-- linux：Linux 节点综合管理脚本，包含 AWG、SSH、开发工具、英文用户目录与笔记本合盖管理
-- macos：macOS SSH 综合管理脚本
-- android-termux：Android Termux SSH 综合管理脚本
-
-所有脚本不带子命令直接运行时都会打开交互菜单，可以按提示完成操作。
-Windows 可双击 server-kit-ssh.cmd；Linux、macOS 和 Android 在终端运行对应脚本。
-
-Linux 安装 AWG 时，请把 linux/server-kit-node-linux.sh 与下载的主/备两份 AWG 配置放在同一目录。
-脚本不包含节点私钥、账号密码或服务器专属配置。
-"""
-        output = io.BytesIO()
-        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            self._write_archive_member(archive, "README.txt", readme.encode("utf-8"), 0o644)
-            for platform, member_name in members:
-                self._write_archive_member(
-                    archive, member_name, self.download(platform).payload, 0o755
-                )
-        return SshScriptDownload(
-            output.getvalue(), "server-kit-node-scripts.zip", "application/zip"
-        )
-
-    @staticmethod
-    def _write_archive_member(
-        archive: zipfile.ZipFile, name: str, payload: bytes, mode: int
-    ) -> None:
-        # 固定元数据，保证同一版本生成的压缩包内容稳定且不泄露服务器时间。
-        info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-        info.compress_type = zipfile.ZIP_DEFLATED
-        info.create_system = 3
-        info.external_attr = ((0o100000 | mode) & 0xFFFF) << 16
-        archive.writestr(info, payload)
 
     @staticmethod
     def _validate_contract(adapter: SshPlatformAdapter, script: str) -> None:
