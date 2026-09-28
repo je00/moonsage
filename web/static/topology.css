@@ -64,7 +64,9 @@
 .topology-graph { position: relative; isolation: isolate; overflow: hidden; min-width: 0; min-height: 560px; margin: 0; background: var(--surface-subtle); background-image: radial-gradient(var(--line) .65px, transparent .65px); background-size: 26px 26px; cursor: grab; touch-action: pan-y pinch-zoom; user-select: none; -webkit-user-select: none; }
 .topology-graph[data-layout-editing="true"] { touch-action: none; }
 .topology-graph[data-dragging="true"], .topology-graph[data-dragging="true"] .topology-node { cursor: grabbing; }
-.topology-world { position: absolute; inset: 0 auto auto 0; width: 0; height: 0; transform-origin: 0 0; will-change: transform; }
+/* Let the browser repaint text and SVG at the current scale. A persistent
+   will-change layer can retain low-resolution backing pixels after zooming. */
+.topology-world { position: absolute; inset: 0 auto auto 0; width: 0; height: 0; transform-origin: 0 0; }
 .topology-world > svg { position: absolute; inset: 0 auto auto 0; width: 1px; height: 1px; max-width: none; overflow: visible; pointer-events: none; }
 .topology-spoke { --topology-type-color: var(--topology-outbound); fill: none; stroke: var(--muted); stroke-width: 1.1; stroke-dasharray: 5 7; opacity: .5; }
 .topology-spoke.kind-vless { --topology-type-color: var(--topology-inbound); }
