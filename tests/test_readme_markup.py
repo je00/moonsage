@@ -100,6 +100,16 @@ class ReadmeMarkupTests(unittest.TestCase):
                     # units remain visible even when the image is scaled down.
                     self.assertGreaterEqual(length - heads * head_width, 16)
 
+    def test_both_readmes_link_the_same_local_topology_screenshot(self):
+        root = Path(__file__).resolve().parents[1]
+        image = "docs/images/topology.png"
+        self.assertTrue((root / image).read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+        for name in ("README.md", "README.en.md"):
+            with self.subTest(document=name):
+                source = (root / name).read_text()
+                self.assertRegex(source, rf"!\[[^\]\n]+\]\({re.escape(image)}\)")
+                self.assertIn("](docs/node-telemetry.md)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

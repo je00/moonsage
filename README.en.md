@@ -74,6 +74,20 @@ Access rules → Add rule → Add another → Preview → Confirm.
 
 **To isolate devices: add needed rules first, then remove the “all” rule.**
 
+## View connections
+
+`内网节点 → 连接视图 → select a node → 我可访问 / 可访问我`
+
+Nodes → Connections → select → outgoing / incoming access.
+
+![Local demo: blue AWG, purple VLESS, orange VPS; single borders and target badges mark allowed nodes, arrows point to access destinations via the VPS, and cards show ports and traffic rates](docs/images/topology.png)
+
+- Colored borders + **目标/来源** badges show allowed targets/sources. Cards show ports; details show full ranges.
+- All nodes in one graph. Drag and zoom; on phones tap **调整布局**, then **完成调整** to scroll again.
+- ↑ to VPS / ↓ from VPS: total private + Internet traffic, in B/s. VLESS shows `—` when statistics are off. [Rate details](docs/node-telemetry.md)
+
+Permissions and recent handshakes **do not prove live connectivity**. Arrows point to access destinations via the VPS.
+
 ## Optional features
 
 | Need | Action / requirement |
