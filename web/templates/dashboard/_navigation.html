@@ -1,5 +1,5 @@
 <aside class="sidebar">
-  <a class="brand" href="{% url 'dashboard' %}" aria-label="server-kit 主机总览"><span class="brand-mark small">{% include "dashboard/_icon.html" with icon="terminal" %}</span><span><strong>server-kit<span class="brand-period">.</span></strong><small>内网 · 服务 · 访问控制</small></span></a>
+  <a class="brand" href="{% url 'home' %}" aria-label="moonsage 首页"><span class="brand-mark small moonsage-mark">{% include "dashboard/_moon_mark.html" %}</span><span><strong>moonsage</strong><small>内网 · 服务 · 访问控制</small></span></a>
   <nav aria-label="主导航">
     <span class="nav-section-label">工作空间</span>
     {% include "dashboard/_nav_link.html" with page="dashboard" route="dashboard" label="主机总览" %}
@@ -21,7 +21,7 @@
   </div>
 </aside>
 
-<header class="mobile-header"><a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark small">{% include "dashboard/_icon.html" with icon="terminal" %}</span><strong>server-kit<span class="brand-period">.</span></strong></a><span class="mobile-context">内网管理</span></header>
+<header class="mobile-header"><a class="brand" href="{% url 'home' %}" aria-label="moonsage 首页"><span class="brand-mark small moonsage-mark">{% include "dashboard/_moon_mark.html" %}</span><strong>moonsage</strong></a><span class="mobile-context">内网管理</span></header>
 <nav class="mobile-nav" aria-label="手机导航">
   {% include "dashboard/_nav_link.html" with page="dashboard" route="dashboard" label="总览" %}
   {% include "dashboard/_nav_link.html" with page="nodes" route="network-nodes" label="内网节点" %}

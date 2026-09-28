@@ -471,14 +471,15 @@ class DashboardTests(TestCase):
 
     def test_dashboard_requires_login(self) -> None:
         response = self.client.get(reverse("dashboard"))
-        self.assertRedirects(response, f"{reverse('login')}?next=/")
+        self.assertRedirects(response, f"{reverse('login')}?next={reverse('dashboard')}")
 
     @patch("dashboard.views.read_snapshot", return_value={"services": []})
-    def test_three_themes_are_available_and_persisted_in_browser(self, _snapshot) -> None:
+    def test_two_blue_appearances_are_available_and_persisted_in_browser(self, _snapshot) -> None:
         login = self.client.get(reverse("login"))
         self.assertContains(login, 'data-theme-value="dark"', count=1)
         self.assertContains(login, 'data-theme-value="light"', count=1)
-        self.assertContains(login, 'data-theme-value="sky"', count=1)
+        self.assertNotContains(login, 'data-theme-value="sky"')
+        self.assertContains(login, '>暗色</button>')
         login_html = login.content.decode("utf-8")
         self.assertLess(login_html.index("theme.js"), login_html.index("app.css"))
 
@@ -487,17 +488,18 @@ class DashboardTests(TestCase):
         self.assertContains(dashboard, "data-theme-picker", count=2)
         self.assertContains(dashboard, 'data-theme-value="dark"', count=2)
         self.assertContains(dashboard, 'data-theme-value="light"', count=2)
-        self.assertContains(dashboard, 'data-theme-value="sky"', count=2)
+        self.assertNotContains(dashboard, 'data-theme-value="sky"')
 
         static_root = Path(__file__).resolve().parents[1] / "static"
         theme_js = (static_root / "theme.js").read_text(encoding="utf-8")
         self.assertIn('server-kit-theme', theme_js)
         self.assertIn('document.documentElement.dataset.theme', theme_js)
         self.assertIn('window.localStorage.setItem', theme_js)
-        css = (static_root / "app.css").read_text(encoding="utf-8")
-        self.assertIn(':root[data-theme="light"]', css)
-        self.assertIn(':root[data-theme="sky"]', css)
-        self.assertIn('.mobile-theme-picker', css)
+        theme_css = (static_root / "moonsage/theme.css").read_text(encoding="utf-8")
+        self.assertIn(':root[data-theme="light"]', theme_css)
+        self.assertIn(':root[data-theme="dark"]', theme_css)
+        self.assertNotIn(':root[data-theme="sky"]', theme_css)
+        self.assertIn('.mobile-theme-picker', (static_root / "app.css").read_text(encoding="utf-8"))
 
     def test_node_deployment_guide_requires_login(self) -> None:
         response = self.client.get(reverse("node-deployment-guide"))
@@ -796,7 +798,7 @@ class DashboardTests(TestCase):
         self.assertContains(response, "50%")
         self.assertContains(response, "25%")
         self.assertContains(response, "运行 1 天")
-        self.assertNotContains(response, 'href="/#services">托管服务</a>')
+        self.assertNotContains(response, f'href="{reverse("dashboard")}#services">托管服务</a>')
 
     @patch("dashboard.views.network_overview")
     def test_permission_delete_form_uses_compact_range(self, overview) -> None:

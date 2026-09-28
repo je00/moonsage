@@ -33,7 +33,7 @@ async function main() {
       await page.goto(new URL("login/", base).href);
       await page.locator('[name="username"]').fill("preview");
       await page.locator('[name="password"]').fill("Preview-only-2026!");
-      await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+      await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
       await page.goto(new URL("__preview__/", base).href);
       assert.equal(await page.title(), "Local visual preview", "Refuse account changes without the preview-only index.");
       assert.match(await page.locator("h1").textContent(), /合成数据/);

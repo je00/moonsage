@@ -54,7 +54,7 @@ async function session(browser, width = 390, username = "preview") {
   await page.goto(new URL("login/", base).href);
   await field(page, "username").fill(username);
   await field(page, "password").fill(password);
-  await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+  await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
   assert.equal((await context.request.get(new URL("__preview__/scenario/rich/", base).href)).status(), 200);
   await page.goto(new URL("network/proxy/", base).href);
   const navigations = [], requests = [];

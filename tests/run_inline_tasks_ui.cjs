@@ -30,7 +30,7 @@ async function session(browser, route, width) {
   await page.goto(new URL("login/", base).href);
   await page.locator('[name="username"]').fill("preview");
   await page.locator('[name="password"]').fill(password);
-  await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+  await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
   assert.equal((await context.request.get(new URL("__preview__/scenario/rich/", base).href)).status(), 200);
   await page.goto(new URL(route, base).href);
   const navigations = [], requests = [];

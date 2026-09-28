@@ -31,7 +31,7 @@ async function main() {
     await page.screenshot({path: path.join(directory, "login-desktop.png"), fullPage: true});
     await page.locator('[name="username"]').fill("preview");
     await page.locator('[name="password"]').fill("Preview-only-2026!");
-    await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+    await Promise.all([page.waitForURL(new URL("/overview/", base).href), page.locator('button[type="submit"]').click()]);
     await page.goto(new URL("__preview__/", base).href);
     const routes = await page.locator('a[href^="/"]').evaluateAll(links => [...new Set(links
       .map(link => link.getAttribute("href"))
@@ -47,7 +47,7 @@ async function main() {
           mainCount: document.querySelectorAll("main#main-content").length,
           titleCount: document.querySelectorAll("main h1").length,
         }));
-        const name = route === "/" ? "overview" : route.replace(/[^a-zA-Z0-9-]+/g, "-").replace(/^-|-$/g, "");
+        const name = route === "/" ? "home" : route.replace(/[^a-zA-Z0-9-]+/g, "-").replace(/^-|-$/g, "");
         await page.screenshot({path: path.join(directory, `${width}-${name}.png`), fullPage: true});
         checks.push({route, width, status: response.status(), ...metrics});
       }

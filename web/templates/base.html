@@ -1,14 +1,16 @@
 {% load static %}
 <!doctype html>
-<html lang="zh-Hans">
+<html lang="zh-Hans" data-theme="light">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark light">
-    <meta name="theme-color" content="#f5f4f0">
-    <title>{% block title %}server-kit{% endblock %}</title>
+    <meta name="theme-color" content="#f0f6f8">
+    <title>{% block title %}moonsage{% endblock %}</title>
+    <link rel="icon" href="{% static 'moonsage/mark.svg' %}" type="image/svg+xml">
     <script src="{% static 'theme.js' %}"></script>
     <link rel="stylesheet" href="{% static 'app.css' %}">
+    <link rel="stylesheet" href="{% static 'moonsage/theme.css' %}">
     <link rel="stylesheet" href="{% static 'console.css' %}">
     {% block extra_head %}{% endblock %}
     <script src="{% static 'app.js' %}" defer></script>

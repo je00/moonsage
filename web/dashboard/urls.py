@@ -2,11 +2,12 @@
 
 from django.urls import path
 
-from . import inline_tasks, telemetry_views, topology_views, views
+from . import inline_tasks, landing, telemetry_views, topology_views, views
 
 
 urlpatterns = [
-    path("", views.dashboard, name="dashboard"),
+    path("", landing.home, name="home"),
+    path("overview/", views.dashboard, name="dashboard"),
     path("guides/nodes/", views.node_deployment_guide, name="node-deployment-guide"),
     path("guides/nodes/scripts/download/", views.sshd_script_archive_download, name="sshd-script-archive-download"),
     path(

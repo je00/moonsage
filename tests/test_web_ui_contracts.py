@@ -27,6 +27,9 @@ class WebUiContractsTests(unittest.TestCase):
     def test_theme_restores_only_supported_values(self) -> None:
         self.run_contract("theme-restore")
 
+    def test_retired_sky_palette_migrates_to_light_with_storage_fallback(self) -> None:
+        self.run_contract("theme-sky-migration")
+
     def test_generated_configuration_handles_disabled_session_storage(self) -> None:
         self.run_contract("bundle-storage-disabled")
 

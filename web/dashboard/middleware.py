@@ -33,7 +33,7 @@ class SafeExpiredPostMiddleware:
                 response = JsonResponse({"error": "登录已失效，请重新登录后继续。"}, status=401)
                 add_never_cache_headers(response)
                 return response
-            target = "/"
+            target = reverse("dashboard")
             referer = request.META.get("HTTP_REFERER", "")
             if referer and url_has_allowed_host_and_scheme(
                 referer,
@@ -41,7 +41,7 @@ class SafeExpiredPostMiddleware:
                 require_https=request.is_secure(),
             ):
                 parsed = urlsplit(referer)
-                target = parsed.path or "/"
+                target = parsed.path or reverse("dashboard")
                 if parsed.query:
                     target = f"{target}?{parsed.query}"
             return HttpResponseRedirect(f"{login_path}?{urlencode({'next': target})}")

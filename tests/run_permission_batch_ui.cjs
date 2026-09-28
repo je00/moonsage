@@ -34,7 +34,7 @@ async function session(browser, width = 1440) {
   await page.goto(new URL("login/", base).href);
   await page.locator('[name="username"]').fill("preview");
   await page.locator('[name="password"]').fill("Preview-only-2026!");
-  await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+  await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
   const reset = await context.request.get(new URL("__preview__/scenario/rich/", base).href);
   assert.equal(reset.status(), 200);
   await page.goto(new URL("network/nodes/", base).href);

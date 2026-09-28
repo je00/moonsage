@@ -6,6 +6,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.template.loader import render_to_string
 from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.urls import reverse
 
 from control_plane.client import AgentError
 from .task_navigation import task_navigation_context
@@ -64,7 +65,7 @@ class TaskNavigationTests(SimpleTestCase):
         destination = self.origin("service.restart", result={
             "service": {"id": "//example.com/"},
         }, preview={"facts": {"服务": "https://example.com"}}, next="https://example.com")
-        self.assertEqual(destination, {"url": "/", "label": "服务总览"})
+        self.assertEqual(destination, {"url": reverse("dashboard"), "label": "服务总览"})
         self.assertIsNone(self.origin("unknown.action", result={"service_id": "clash"}))
         for invalid in (None, "invalid", [], {"action": []}, {"action": "service.start", "preview": []}):
             with self.subTest(invalid=invalid):

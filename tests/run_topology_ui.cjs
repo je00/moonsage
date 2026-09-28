@@ -97,7 +97,7 @@ async function session(browser, width = 390, options = {}) {
   await page.goto(new URL("login/", base).href);
   await page.locator('[name="username"]').fill("preview");
   await page.locator('[name="password"]').fill(password);
-  await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+  await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
   assert.equal((await context.request.get(new URL("__preview__/scenario/rich/", base).href)).status(), 200);
   const navigations = [], requests = [], allRequests = [];
   page.on("request", request => {
@@ -492,7 +492,7 @@ async function readabilityAudit(browser, label) {
         assert.equal(state.requests.length, requestsBefore, "overview return needs no fetch");
         const target = model.nodes.find(node => node.kind === "awg" && model.links.some(link => link.source === node.id && link.target !== "hub"));
         assert.ok(target, "readability scene includes client-to-client permissions");
-        for (const theme of ["light", "dark", "sky"]) {
+        for (const theme of ["light", "dark"]) {
           await setTheme(page, width, theme);
           for (const stateName of ["overview", "forward", "reverse"]) {
             if (stateName === "overview") await mode(page, "overview");
@@ -534,7 +534,7 @@ async function readabilityAudit(browser, label) {
         assert.ok(state.requests.length <= beforeDirectionChange + 1, "direction changes are local; only selection may fetch");
       }
       await assertReadOnly(state);
-      report.checks.push(`${label} ${width}: six-node and realistic twelve-node/46-direction scenes, overview and both selected directions, complete inspector, readable type and collision-free inline ports in three themes`);
+      report.checks.push(`${label} ${width}: six-node and realistic twelve-node/46-direction scenes, overview and both selected directions, complete inspector, readable type and collision-free inline ports in light and dark appearances`);
     } finally { await context.close(); }
   }
 }
@@ -1283,7 +1283,7 @@ async function responsiveThemes(browser, label, width) {
     await selectionSettled(page, target);
     assert.match(await hook(page, "details").textContent(), new RegExp(target.split(":").slice(1).join(":")));
     assert.equal(await page.locator('button[data-topology-mode="relations"]').getAttribute("aria-pressed"), "true", "node click enters relationship mode");
-    for (const theme of ["dark", "light", "sky"]) {
+    for (const theme of ["light", "dark"]) {
       await setTheme(page, width, theme);
       await assertControlContrast(page, label, width, theme);
       await assertGraph(page);
@@ -1301,7 +1301,7 @@ async function responsiveThemes(browser, label, width) {
       }
     }
     await assertReadOnly(state);
-    report.checks.push(`${label} ${width}: clean overview, all nodes, single-direction inspection, touch/click selection, three themes, no overflow or navigation`);
+    report.checks.push(`${label} ${width}: clean overview, all nodes, single-direction inspection, touch/click selection, light and dark appearances, no overflow or navigation`);
   } finally { await context.close(); }
 }
 

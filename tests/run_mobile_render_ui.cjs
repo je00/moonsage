@@ -17,7 +17,7 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "server-kit-mobile-rende
 const report = {directory, checks: [], failures: [], screenshots: [], errors: [], blocked: []};
 const sizes = [{width: 390, height: 844}, {width: 390, height: 600}, {width: 390, height: 430},
   {width: 320, height: 844}, {width: 320, height: 600}, {width: 320, height: 430}];
-const themes = ["light", "dark", "sky"];
+const themes = ["light", "dark"];
 
 function check(pass, message, context, evidence = null) {
   const item = {pass: Boolean(pass), message, ...context, ...(evidence ? {evidence} : {})};
@@ -47,6 +47,8 @@ async function pickerGeometry(page, selector, context) {
   check(result.picker.left >= -0.5 && result.picker.right <= result.viewport.width + 0.5,
     "theme picker stays inside viewport width", context, result);
   const selected = result.options.filter(item => item.pressed === "true");
+  check(result.options.length === 2 && result.options.map(item => item.theme).join(",") === "light,dark",
+    "only light and dark appearances are offered", context, result);
   check(selected.length === 1 && selected[0].theme === context.theme, "exactly the requested theme is selected", context, result);
   for (const option of result.options) {
     const r = option.bounds, g = result.group;
@@ -227,7 +229,7 @@ async function localActionTargets(page, context) {
         await page.setViewportSize(sizes[0]);
         await page.locator('[name="username"]').fill("preview");
         await page.locator('[name="password"]').fill("Preview-only-2026!");
-        await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+        await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
         const preview = await page.goto(new URL("__preview__/", base).href);
         const previewHeading = await page.locator("h1").innerText();
         if (preview.status() !== 200 || !previewHeading.includes("本地视觉审查") || !previewHeading.includes("合成数据")
@@ -235,7 +237,7 @@ async function localActionTargets(page, context) {
           throw new Error("The server did not identify itself as the isolated synthetic-data preview.");
         }
         check(true, "server explicitly identifies as a local synthetic-data preview", {browser: name});
-        await page.goto(base.href);
+        await page.goto(new URL('/overview/', base).href);
         for (const size of sizes) {
           await page.setViewportSize(size);
           for (const theme of themes) await menuCase(page, {browser: name, ...size, theme, page: "dashboard"});

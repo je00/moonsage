@@ -314,7 +314,7 @@ async function scenario(browser, engine, width) {
     await page.goto(new URL("login/", base).href);
     await page.locator('[name="username"]').fill("preview");
     await page.locator('[name="password"]').fill("Preview-only-2026!");
-    await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+    await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
     await page.route(isJSON, route => {
       const id = new URL(route.request().url()).searchParams.get("node");
       const model = missingContext ? packet.missing_context : packet.models[id] || packet.models[packet.initial_selected];
@@ -366,7 +366,7 @@ async function scenario(browser, engine, width) {
     }
     const allModel = packet.models["vless:phone-all"], partialModel = packet.models["vless:phone-ports"], nasModel = packet.models["vless:phone-nas"], hubModel = packet.models.hub, nasTargetModel = packet.models["awg:nas-primary"];
     const details = hook(page, "full-details");
-    for (const theme of ["light", "dark", "sky"]) {
+    for (const theme of ["light", "dark"]) {
       await setTheme(page, width, theme);
       await overview(page, allModel, requests);
       await capture(page, `${engine}-${width}-${theme}-overview.png`);
@@ -421,7 +421,7 @@ async function scenario(browser, engine, width) {
     assert.ok(allRequests.every(request => request.method === "GET" && (isJSON(new URL(request.url)) || new URL(request.url).pathname === "/network/telemetry/")), "configuration and telemetry remain exclusively read-only and no unrelated endpoint is called");
     assert.doesNotMatch(await hook(page, "root").innerHTML(), /synthetic-topology-private-credential-never-render|vless:\/\/|Preview-only-2026/);
     report.requests.push({engine, width, topologyGETs: requests.length});
-    report.checks.push(`${engine} ${width}: real backend permissions, exact type-colored peers and current marker, inline protocol/port scopes with no floating labels or card overlap even for dense hub inbound, three themes, direction/overview/selection cleanup, GET-only and no credentials`);
+    report.checks.push(`${engine} ${width}: real backend permissions, exact type-colored peers and current marker, inline protocol/port scopes with no floating labels or card overlap even for dense hub inbound, light and dark appearances, direction/overview/selection cleanup, GET-only and no credentials`);
   } finally { await context.close(); }
 }
 

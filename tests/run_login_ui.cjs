@@ -17,6 +17,7 @@ if (base.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(base.hostn
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "server-kit-login-ui-"));
 const report = {directory, cases: [], failures: [], screenshots: [], jsErrors: [], blocked: []};
 const password = "Preview-only-2026!";
+const dashboardPath = "/overview/";
 const sessionCookie = `server_kit_preview_${base.port}`;
 const csrfCookie = `server_kit_preview_csrf_${base.port}`;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -111,6 +112,14 @@ async function verifySyntheticPreview(browser, engine) {
 async function normalLogin(context, record, route, expected, mode = "single") {
   const page = await context.newPage();
   await page.goto(localUrl(route));
+  if (route === "/") {
+    assert.equal(page.url(), base.href, "The anonymous home page must remain reachable");
+    assert.equal(await page.locator('main#main-content h1').innerText(), "moonsage");
+    assert.equal(await page.locator('[name="password"]').count(), 0);
+    await page.locator(`a[href="${dashboardPath}"]`).first().click();
+    assert.equal(new URL(page.url()).pathname, "/login/");
+    assert.equal(new URL(page.url()).searchParams.get("next"), dashboardPath);
+  }
   await fill(page);
   const response = await submit(page, mode);
   assert.equal(response.status(), 200);
@@ -202,7 +211,7 @@ async function anonymousExpiredToken(context, record) {
   assert.equal(await page.locator('[name="password"]').inputValue(), "", "The password must not be automatically replayed");
   await fill(page);
   assert.equal((await submit(page)).status(), 200);
-  assert.equal(page.url(), base.href);
+  assert.equal(page.url(), localUrl(dashboardPath));
 }
 
 async function restrictedStalePost(context, record, restriction) {
@@ -229,15 +238,17 @@ async function runEngine(engineName, engine) {
   try {
     await verifySyntheticPreview(browser, engineName);
     for (let repeat = 0; repeat < 2; repeat++) {
-      for (const [route, expected, label] of [["/login/", "/", "login"], ["/", "/", "root"],
+      for (const [route, expected, label] of [["/login/", dashboardPath, "login"], ["/", dashboardPath, "home-to-console"],
+        [dashboardPath, dashboardPath, "overview"],
         ["/network/nodes/?from=login", "/network/nodes/?from=login", "node-deep-link"], ["/files/", "/files/", "file-deep-link"]]) {
         await runCase(browser, engineName, `${label}-${repeat}`, (context, record) => normalLogin(context, record, route, expected));
       }
       for (const mode of ["double-click", "enter-click"]) {
-        await runCase(browser, engineName, `${mode}-${repeat}`, (context, record) => normalLogin(context, record, "/login/", "/", mode));
+        await runCase(browser, engineName, `${mode}-${repeat}`, (context, record) => normalLogin(context, record, "/login/", dashboardPath, mode));
       }
     }
     await runCase(browser, engineName, "no-js", (context, record) => normalLogin(context, record, "/network/nodes/", "/network/nodes/"), {javaScriptEnabled: false});
+    await runCase(browser, engineName, "home-no-js", (context, record) => normalLogin(context, record, "/", dashboardPath), {javaScriptEnabled: false});
     await runCase(browser, engineName, "stale-second-tab", staleTabs);
     await runCase(browser, engineName, "back-to-cached-form", backToOldForm);
     await runCase(browser, engineName, "anonymous-expired-token", anonymousExpiredToken);
@@ -248,9 +259,9 @@ async function runEngine(engineName, engine) {
       ["/login/", "login-loop"], ["/logout/", "logout"], ["/%6cogin/", "encoded-login-loop"],
       ["#section", "fragment-login-loop"], ["?next=%23section", "query-login-loop"], ["/network/../login/", "dot-segment-login-loop"]]) {
       await runCase(browser, engineName, `unsafe-next-${label}`,
-        (context, record) => normalLogin(context, record, `/login/?next=${encodeURIComponent(next)}`, "/"));
+        (context, record) => normalLogin(context, record, `/login/?next=${encodeURIComponent(next)}`, dashboardPath));
     }
-    await runCase(browser, engineName, "stale-unsafe-next", (context, record) => staleTabs(context, record, "https://untrusted.example.invalid/", "/"));
+    await runCase(browser, engineName, "stale-unsafe-next", (context, record) => staleTabs(context, record, "https://untrusted.example.invalid/", dashboardPath));
   } finally {
     await browser.close();
   }

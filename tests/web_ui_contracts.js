@@ -207,10 +207,42 @@ const cases = {
     assert.equal(button.getAttribute("aria-pressed"), "true");
   },
   "theme-restore"() {
-    for (const [saved, expected] of [["sky", "sky"], ["light", "light"], ["dark", "dark"], ["unexpected", "light"]]) {
-      const browser = makeBrowser({stored: {"server-kit-theme": saved}});
+    for (const [saved, expected] of [[null, "light"], ["sky", "light"], ["light", "light"], ["dark", "dark"], ["unexpected", "light"]]) {
+      const browser = makeBrowser({stored: saved === null ? {} : {"server-kit-theme": saved}});
+      const meta = browser.element("meta");
+      browser.document.queries.set('meta[name="theme-color"]', [meta]);
       browser.load("theme.js");
       assert.equal(browser.document.documentElement.dataset.theme, expected);
+      assert.equal(meta.getAttribute("content"), expected === "dark" ? "#101d27" : "#f0f6f8");
+    }
+  },
+  "theme-sky-migration"() {
+    for (const writeBlocked of [false, true]) {
+      const browser = makeBrowser({stored: {"server-kit-theme": "sky"}});
+      const buttons = ["light", "dark"].map(theme => {
+        const button = browser.element("button");
+        button.dataset.themeValue = theme;
+        button.selectors = ["[data-theme-value]"];
+        return button;
+      });
+      browser.document.queries.set("[data-theme-value]", buttons);
+      const write = browser.window.localStorage.setItem;
+      let writes = 0;
+      browser.window.localStorage.setItem = (key, value) => {
+        writes += 1;
+        if (writeBlocked) throw new Error("Storage is read-only");
+        write(key, value);
+      };
+      browser.load("theme.js");
+      assert.equal(browser.document.documentElement.dataset.theme, "light");
+      assert.equal(buttons[0].getAttribute("aria-pressed"), "true");
+      assert.equal(buttons[1].getAttribute("aria-pressed"), "false");
+      assert.equal(browser.memory.get("server-kit-theme"), writeBlocked ? "sky" : "light");
+      if (!writeBlocked) assert.equal(writes, 1, "The retired palette should be migrated once");
+      browser.document.dispatch("click", {target: buttons[1]});
+      assert.equal(browser.document.documentElement.dataset.theme, "dark");
+      assert.equal(buttons[1].getAttribute("aria-pressed"), "true");
+      assert.equal(browser.memory.get("server-kit-theme"), writeBlocked ? "sky" : "dark");
     }
   },
   "bundle-storage-disabled"() {

@@ -1,6 +1,8 @@
-# server-kit
+# moonsage
 
 以 Debian VPS 为中心的星形内网，在内网面板管理权限与服务。
+
+原 server-kit；仓库名与部署命令不变。
 
 [中文](README.md) · [Easy English](README.en.md) · [直接部署](#快速部署)
 
@@ -54,7 +56,7 @@ bash ./server-kit init
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9080:10.20.0.1:9080 -p SSH_PORT root@YOUR_VPS_IP
 ```
 
-浏览器打开 [http://127.0.0.1:9080](http://127.0.0.1:9080)，用刚创建的账号登录。
+打开 [http://127.0.0.1:9080](http://127.0.0.1:9080) → **控制台**，用刚创建的账号登录。
 
 ### 3. 浏览器：内网节点 → 新增节点
 

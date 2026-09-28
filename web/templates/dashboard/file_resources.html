@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}文件资源 · server-kit{% endblock %}
+{% block title %}文件资源 · moonsage{% endblock %}
 {% block extra_head %}<script src="{% static 'uploads.js' %}" defer></script>{% endblock %}
 {% block body %}
 {% if files.items %}{% include "dashboard/_sensitive_auth_modal.html" with sensitive_auth_destination="files" %}{% endif %}

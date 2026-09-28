@@ -208,7 +208,7 @@ async function integration(engine, browser, width) {
   const page = await context.newPage(); page.on("pageerror", error => report.errors.push(error.message));
   await page.goto(new URL("login/", base).href);
   await page.locator('[name="username"]').fill("preview"); await page.locator('[name="password"]').fill("Preview-only-2026!");
-  await Promise.all([page.waitForURL(base.href), page.locator('button[type="submit"]').click()]);
+  await Promise.all([page.waitForURL(new URL('/overview/', base).href), page.locator('button[type="submit"]').click()]);
   assert.equal((await context.request.get(new URL("__preview__/scenario/rich/", base).href)).status(), 200);
   await page.goto(new URL("network/topology/", base).href);
   await page.waitForFunction(() => document.querySelector("[data-telemetry-update]").dataset.state === "ready");

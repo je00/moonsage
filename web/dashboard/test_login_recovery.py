@@ -5,6 +5,7 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
+from django.urls import reverse
 
 from .services import read_host
 
@@ -102,7 +103,7 @@ class LoginRecoveryTests(TestCase):
                 response = self.client.post("/login/", {**self.form, "next": target},
                                             HTTP_ORIGIN="http://testserver")
                 self.assertEqual(response.status_code, 303)
-                self.assertEqual(response["Location"], "/")
+                self.assertEqual(response["Location"], reverse("dashboard"))
 
     def test_authenticated_login_never_redirects_back_to_auth_endpoints(self):
         self.login()
@@ -113,11 +114,11 @@ class LoginRecoveryTests(TestCase):
             with self.subTest(target=target):
                 response = self.client.get("/login/", {"next": target})
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(response["Location"], "/")
+                self.assertEqual(response["Location"], reverse("dashboard"))
                 response = self.client.post("/login/", {**self.form, "next": target},
                                             HTTP_ORIGIN="http://testserver")
                 self.assertEqual(response.status_code, 303)
-                self.assertEqual(response["Location"], "/")
+                self.assertEqual(response["Location"], reverse("dashboard"))
 
     @patch("dashboard.services.AgentClient")
     def test_home_read_allows_the_collectors_fifteen_second_deadline(self, client):
@@ -131,7 +132,7 @@ class LoginRecoveryTests(TestCase):
     @patch("dashboard.views.read_snapshot", side_effect=TimeoutError("synthetic slow collector"))
     def test_unavailable_collector_keeps_the_dashboard_and_session(self, snapshot):
         self.login()
-        response = self.client.get("/")
+        response = self.client.get(reverse("dashboard"))
         self.assertContains(response, "无法加载当前状态")
         self.assertContains(response, 'href="/network/nodes/"')
         self.assertEqual(self.client.session["_auth_user_id"], str(self.user.pk))
@@ -142,5 +143,5 @@ class LoginRecoveryTests(TestCase):
         client.return_value.request.side_effect = TimeoutError("synthetic slow collector")
         response = self.client.get("/network/nodes/")
         self.assertContains(response, "暂时无法读取节点与订阅状态")
-        self.assertContains(response, 'href="/"')
+        self.assertContains(response, f'href="{reverse("dashboard")}"')
         self.assertEqual(self.client.session["_auth_user_id"], str(self.user.pk))

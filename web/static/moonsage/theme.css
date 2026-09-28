@@ -1,0 +1,29 @@
+/* One sky-blue palette, two modes; shared by home, login and console. */
+:root,
+:root[data-theme="light"] {
+  --bg: #f0f6f8; --panel: #fff; --panel-strong: #fff; --line: #d7e4e9;
+  --text: #193444; --muted: #586f7d; --accent: #1c7091; --accent-soft: #e5f1f6;
+  --accent-text: #176486; --accent-heading: #176486; --accent-border: #bdd9e6; --accent-border-strong: #70aac2;
+  --sidebar-bg: #17313f; --mobile-nav-bg: #fff; --field-bg: #fff; --surface-soft: #f1f7fa;
+  --surface-subtle: #f8fbfc; --panel-soft: #f1f7fa; --text-soft: #355264; --text-subtle: #4c6777;
+  --button-start: #1c7091; --button-end: #1c7091; --brand-start: #267e9f; --brand-end: #267e9f;
+  --dialog-bg: #fff; --code-bg: #17313f; --code-text: #e1f1f8; --shadow: #1934440c;
+  --success: #26754e; --success-text: #216542; --danger: #b63245; --danger-text: #a6293c;
+  --warning-text: #805820; --body-glow: var(--bg); --on-accent: #fff; --overlay-bg: #092b408c;
+  --nav-text: #b2c9d5; --nav-active: #e5f5fc; --nav-accent: #82ccef;
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+:root[data-theme="dark"] {
+  --bg: #101d27; --panel: #182c39; --panel-strong: #1f3746; --line: #314958;
+  --text: #e8f3fa; --muted: #a0b8c7; --accent: #63bde7; --accent-soft: #63bde71a;
+  --accent-text: #90d3f2; --accent-heading: #90d3f2; --accent-border: #63bde740; --accent-border-strong: #63bde780;
+  --sidebar-bg: #0c1821; --mobile-nav-bg: #182c39; --field-bg: #122431; --surface-soft: #ffffff06;
+  --surface-subtle: #ffffff03; --panel-soft: #ffffff06; --text-soft: #cbdfe9; --text-subtle: #b2c9d5;
+  --button-start: #1c7091; --button-end: #1c7091; --brand-start: #267e9f; --brand-end: #267e9f;
+  --dialog-bg: #182c39; --code-bg: #0c1821; --code-text: #e1f1f8; --shadow: #00000030;
+  --success: #74d2a1; --success-text: #a1e3bd; --danger: #ff8a91; --danger-text: #ffb4ba;
+  --warning-text: #eac082; --body-glow: var(--bg); --on-accent: #fff; --overlay-bg: #020a10c7;
+  --nav-text: #b2c9d5; --nav-active: #e5f5fc; --nav-accent: #82ccef;
+  color-scheme: dark;
+}

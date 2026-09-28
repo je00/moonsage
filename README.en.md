@@ -1,6 +1,8 @@
-# server-kit
+# moonsage
 
 A star network with one Debian VPS at the center. Manage access and services in a private dashboard.
+
+Previously server-kit. The repository name and commands stay the same.
 
 [中文](README.md) · [Easy English](README.en.md) · [Start here](#quick-start)
 
@@ -54,7 +56,7 @@ Continue only after setup succeeds. Replace `SSH_PORT` and `YOUR_VPS_IP`. Use th
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9080:10.20.0.1:9080 -p SSH_PORT root@YOUR_VPS_IP
 ```
 
-Open [http://127.0.0.1:9080](http://127.0.0.1:9080) in your browser. Sign in with your new account.
+Open [http://127.0.0.1:9080](http://127.0.0.1:9080) → **控制台** (Console). Sign in with your new account.
 
 ### 3. Browser: 内网节点 → 新增节点
 

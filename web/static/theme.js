@@ -2,16 +2,20 @@
 
 (() => {
   const storageKey = "server-kit-theme";
-  const themes = new Set(["dark", "light", "sky"]);
+  const themes = new Set(["light", "dark"]);
   const themeColors = {
-    dark: "#171a1b",
-    light: "#f5f4f0",
-    sky: "#f0f6f8",
+    light: "#f0f6f8",
+    dark: "#101d27",
   };
 
   function readTheme() {
     try {
       const saved = window.localStorage.getItem(storageKey);
+      if (saved === "sky") {
+        // The former sky palette is now the default light appearance.
+        window.localStorage.setItem(storageKey, "light");
+        return "light";
+      }
       return themes.has(saved) ? saved : "light";
     } catch (_error) {
       return "light";
