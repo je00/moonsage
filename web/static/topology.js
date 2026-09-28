@@ -437,7 +437,7 @@
     // Never turn a spoke or an unknown relation into access.
     const peers = new Map(displayMode === "relations"
       ? scene.links.map(link => [direction === "forward" ? link.target : link.source, link]) : []);
-    // These undirected spokes show the route through the hub, not extra hub
+    // Route arrows mark only the actual access destination, not extra hub
     // permissions. A real hub-access arrow replaces its coincident spoke.
     const hubArrows = new Set(scene.edges.map(edge => edge.source === "hub" ? edge.target : edge.source));
     for (const spoke of scene.spokes) {
@@ -447,6 +447,17 @@
       spoke.line.classList.toggle("has-permission", hubArrows.has(spoke.source));
       if (role) spoke.line.dataset.topologyRoute = role;
       else delete spoke.line.dataset.topologyRoute;
+      const terminal = !hubArrows.has(spoke.source)
+        && (direction === "forward" ? role === "peer" : role === "selected");
+      // Spoke geometry runs leaf -> hub; marker-start points back to the leaf.
+      // Forward ends at a peer; reverse ends at the current observation node.
+      if (terminal) {
+        spoke.line.setAttribute("marker-start", `url(#topology-route-arrow-${spoke.kind})`);
+        spoke.line.dataset.topologyRouteEnd = spoke.source;
+      } else {
+        spoke.line.removeAttribute("marker-start");
+        delete spoke.line.dataset.topologyRouteEnd;
+      }
     }
     for (const node of snapshot.nodes) {
       const button = scene.nodes.get(node.id), chosen = node.id === snapshot.selected_id;
@@ -519,11 +530,17 @@
     const diagram = svgElement("svg", {"aria-hidden": "true", focusable: "false"});
     const marker = svgElement("marker", {id: "topology-arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 10, markerHeight: 10, markerUnits: "userSpaceOnUse", orient: "auto"});
     marker.append(svgElement("path", {d: "M 1 1 L 8 5 L 1 9", fill: "none", class: "topology-arrow", "stroke-width": 1.5, "stroke-linecap": "round", "stroke-linejoin": "round"}));
-    const definitions = svgElement("defs", {}); definitions.append(marker); diagram.append(definitions);
+    const definitions = svgElement("defs", {}); definitions.append(marker);
+    for (const kind of ["awg", "vless"]) {
+      const arrow = svgElement("marker", {id: `topology-route-arrow-${kind}`, viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 10, markerHeight: 10, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse"});
+      arrow.append(svgElement("path", {d: "M 1 1 L 8 5 L 1 9", fill: "none", class: `topology-route-arrow kind-${kind}`, "stroke-width": 1.5, "stroke-linecap": "round", "stroke-linejoin": "round"}));
+      definitions.append(arrow);
+    }
+    diagram.append(definitions);
     scene = {world, marker, links, nodes: new Map(), edges: [], spokes: [], incidents: new Map(snapshot.nodes.map(node => [node.id, new Set()]))};
     for (const node of snapshot.nodes) if (node.id !== "hub") {
       const line = svgElement("line", {class: `topology-spoke kind-${node.kind}`, "data-topology-spoke": "", "data-source": node.id, "data-target": "hub"});
-      const spoke = {source: node.id, line}; scene.spokes.push(spoke); diagram.append(line); drawSpoke(spoke);
+      const spoke = {source: node.id, kind: node.kind, line}; scene.spokes.push(spoke); diagram.append(line); drawSpoke(spoke);
     }
     const pathsLayer = svgElement("g", {});
     diagram.append(pathsLayer);

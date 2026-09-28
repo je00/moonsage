@@ -113,6 +113,52 @@ async function assertCardEdges(page) {
     `${endpoint.source}→${endpoint.target} ${endpoint.kind}: endpoint stays 7 local px outside the actual content-sized card (${endpoint.distance}px at ${endpoint.scale}×)`);
 }
 
+async function assertMarkerGeometry(page, fit = true) {
+  const arrows = await page.locator("[data-topology-graph]").evaluate(graph => {
+    const rect = element => { const box = element.getBoundingClientRect(); return {left: box.left, right: box.right, top: box.top, bottom: box.bottom}; };
+    const graphBox = rect(graph), scale = Number(graph.dataset.viewportScale);
+    return [...graph.querySelectorAll("[data-topology-edge], [data-topology-spoke]")].flatMap(edge => {
+      if (Number(getComputedStyle(edge).opacity) === 0) return [];
+      return ["start", "end"].flatMap(end => {
+        const ref = edge.getAttribute(`marker-${end}`), id = ref?.match(/#([^)]*)\)/)?.[1];
+        if (!id) return [];
+        const marker = document.getElementById(id), glyph = marker.querySelector("path"), length = edge.getTotalLength();
+        const endpoint = edge.getPointAtLength(end === "start" ? 0 : length);
+        const near = edge.getPointAtLength(end === "start" ? Math.min(.01, length) : Math.max(0, length - .01));
+        let angle = end === "start" ? Math.atan2(near.y - endpoint.y, near.x - endpoint.x) : Math.atan2(endpoint.y - near.y, endpoint.x - near.x);
+        if (end === "start" && marker.getAttribute("orient") === "auto-start-reverse") angle += Math.PI;
+        const refX = Number(marker.getAttribute("refX")), refY = Number(marker.getAttribute("refY"));
+        const markerScale = Number(marker.getAttribute("markerWidth")) / marker.viewBox.baseVal.width;
+        const matrix = edge.getScreenCTM();
+        const vertices = [[1, 1], [8, 5], [1, 9]].map(([x, y]) => {
+          const dx = (x - refX) * markerScale, dy = (y - refY) * markerScale;
+          return new DOMPoint(endpoint.x + dx * Math.cos(angle) - dy * Math.sin(angle), endpoint.y + dx * Math.sin(angle) + dy * Math.cos(angle)).matrixTransform(matrix);
+        });
+        const stroke = parseFloat(getComputedStyle(glyph).strokeWidth) / 2 * scale * markerScale;
+        const nodeId = end === "start" ? edge.dataset.source : edge.dataset.target;
+        const node = graph.querySelector(`[data-topology-node="${nodeId}"]`), box = rect(node), ring = node.classList.contains("is-peer") ? 4 * scale : 0;
+        const tip = vertices[1], tail = {x: (vertices[0].x + vertices[2].x) / 2, y: (vertices[0].y + vertices[2].y) / 2};
+        const towardNode = (tip.x - tail.x) * ((box.left + box.right) / 2 - tip.x) + (tip.y - tail.y) * ((box.top + box.bottom) / 2 - tip.y);
+        const bounds = {left: Math.min(...vertices.map(point => point.x)) - stroke, right: Math.max(...vertices.map(point => point.x)) + stroke,
+          top: Math.min(...vertices.map(point => point.y)) - stroke, bottom: Math.max(...vertices.map(point => point.y)) + stroke};
+        return [{nodeId, id, end, scale, graphBox, bounds, towardNode, glyph: glyph.getAttribute("d"),
+          matrixScale: Math.hypot(matrix.a, matrix.b), markerScale,
+          outsideNode: bounds.right <= box.left - ring || bounds.left >= box.right + ring || bounds.bottom <= box.top - ring || bounds.top >= box.bottom + ring}];
+      });
+    });
+  });
+  for (const arrow of arrows) {
+    assert.equal(arrow.glyph, "M 1 1 L 8 5 L 1 9", "the geometry audit covers the complete actual arrow glyph including its stroke");
+    assert.equal(arrow.markerScale, 1, "marker viewport never counteracts whole-graph zoom");
+    assert.ok(Math.abs(arrow.matrixScale - arrow.scale) < .001, "the arrow's full geometry follows the graph's screen scale");
+    assert.ok(arrow.towardNode > 0, `${arrow.nodeId}: the rendered arrowhead points toward its terminal card, not back toward the route origin`);
+    assert.ok(arrow.outsideNode, `${arrow.nodeId}: terminal arrow remains outside the card and its colored outer ring`);
+    if (fit) assert.ok(arrow.bounds.left >= arrow.graphBox.left && arrow.bounds.right <= arrow.graphBox.right
+      && arrow.bounds.top >= arrow.graphBox.top && arrow.bounds.bottom <= arrow.graphBox.bottom,
+      `${arrow.nodeId}: fitting the graph keeps the entire terminal arrow inside the canvas`);
+  }
+}
+
 async function assertInlinePorts(page, links, selectedId, direction, overview = false) {
   const snapshot = await inlineSnapshot(page);
   assertCompactCards(snapshot);
@@ -154,4 +200,4 @@ async function assertInlinePorts(page, links, selectedId, direction, overview = 
   return snapshot;
 }
 
-module.exports = {assertCardEdges, assertCompactCards, assertInlinePorts, compactScope, geometryFindings, inlineSnapshot};
+module.exports = {assertCardEdges, assertCompactCards, assertInlinePorts, assertMarkerGeometry, compactScope, geometryFindings, inlineSnapshot};

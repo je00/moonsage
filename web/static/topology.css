@@ -70,6 +70,8 @@
 .topology-spoke.kind-vless { --topology-type-color: var(--topology-inbound); }
 .topology-edge { fill: none; stroke: var(--accent-text); stroke-width: 1.6; stroke-dasharray: 6 5; opacity: .9; }
 .topology-arrow { stroke: var(--accent-text); }
+.topology-route-arrow { stroke: var(--topology-outbound); }
+.topology-route-arrow.kind-vless { stroke: var(--topology-inbound); }
 .topology-link.is-connected .topology-edge { stroke: var(--accent-text); stroke-width: 1.7; opacity: .92; }
 .relation-mutual { color: var(--topology-mutual); }
 .relation-outbound { color: var(--topology-outbound); }
@@ -150,7 +152,10 @@
 .topology-dot { display: inline-block; flex: 0 0 .45rem; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
 .topology-legend-line { display: inline-block; width: 1.5rem; border-top: 1.5px dashed var(--accent-text); }
 .topology-legend-line.structure-line { border-color: var(--muted); border-top-style: dotted; opacity: .45; }
-.topology-legend-line.route-line { border-color: var(--topology-outbound); }
+.topology-legend-line.route-line { color: var(--topology-outbound); border-color: currentColor; }
+.topology-legend-line.permission-line { color: var(--accent-text); }
+.topology-legend-line.route-line, .topology-legend-line.permission-line { position: relative; }
+.topology-legend-line.route-line::after, .topology-legend-line.permission-line::after { content: ""; position: absolute; right: 0; top: -3.5px; width: 5px; height: 5px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor; transform: rotate(45deg); }
 .topology-legend-node { --topology-type-color: var(--topology-outbound); display: inline-block; width: 1.15rem; height: .8rem; border: 1px solid var(--topology-type-color); border-radius: .2rem; background: var(--panel); background: color-mix(in srgb, var(--topology-type-color) 10%, var(--panel)); }
 .topology-legend-node.kind-vless { --topology-type-color: var(--topology-inbound); }
 .topology-legend-node.kind-hub { --topology-type-color: var(--topology-hub); }

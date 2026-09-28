@@ -64,9 +64,9 @@
         <p class="topology-canvas-summary" data-topology-canvas-summary role="status" aria-live="polite"></p>
         <div class="topology-legend" aria-label="图例">
           <span><i class="topology-legend-node kind-awg" aria-hidden="true"></i>AWG</span><span><i class="topology-legend-node kind-vless" aria-hidden="true"></i>VLESS</span><span><i class="topology-legend-node kind-hub" aria-hidden="true"></i>VPS</span><span><i class="topology-legend-peer" aria-hidden="true"></i>双框＋目标/来源：当前方向已授权</span>
-          <span><i class="topology-legend-line structure-line" aria-hidden="true"></i>经 VPS 接入</span><span><i class="topology-legend-line route-line" aria-hidden="true"></i>高亮虚线：当前接入路径</span><span><i class="topology-legend-line permission-line" aria-hidden="true"></i>箭头：VPS 访问授权</span>
+          <span><i class="topology-legend-line structure-line" aria-hidden="true"></i>经 VPS 接入</span><span><i class="topology-legend-line route-line" aria-hidden="true"></i>箭头：访问终点（经 VPS）</span><span><i class="topology-legend-line permission-line" aria-hidden="true"></i>VPS 访问授权</span>
         </div>
-        <p class="topology-graph-note">↑ 节点发往 VPS · ↓ 从 VPS 接收，单位 B/s（K/M/G 按 1024 进位），含内外网流量。近期握手不代表实时连通；VLESS 未开启统计时不显示速率。外框和端口表示配置授权；高亮虚线连接当前节点、VPS 与目标/来源，不代表 VPS 另有访问权限，叶子间不画箭头。</p>
+        <p class="topology-graph-note">↑ 节点发往 VPS · ↓ 从 VPS 接收，单位 B/s（K/M/G 按 1024 进位），含内外网流量。近期握手不代表实时连通；VLESS 未开启统计时不显示速率。外框和端口表示配置授权；经 VPS 的箭头指向访问终点，不代表 VPS 另有访问权限，叶子间不画箭头。</p>
       </div>
       <noscript><p class="topology-noscript">当前未启用 JavaScript，交互图暂不可用。可通过上方选择框切换节点，下方提供完整的访问关系。</p></noscript>
     </section>

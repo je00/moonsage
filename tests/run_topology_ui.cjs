@@ -179,6 +179,7 @@ async function assertGraph(page, expectedLinks = null) {
       return {source: line.dataset.source, target: line.dataset.target, dash: style.strokeDasharray, stroke: style.stroke,
         opacity: Number(style.opacity), width: parseFloat(style.strokeWidth), display: style.display,
         route: line.dataset.topologyRoute || null, classRoute: line.classList.contains("is-route"), permission: line.classList.contains("has-permission"),
+        routeEnd: line.dataset.topologyRouteEnd || null,
         kind: line.classList.contains("kind-awg") ? "awg" : line.classList.contains("kind-vless") ? "vless" : null,
         marker: line.getAttribute("marker-end"), reverseMarker: line.getAttribute("marker-start")};
     });
@@ -214,13 +215,16 @@ async function assertGraph(page, expectedLinks = null) {
     const leaf = nodes.find(node => node.id === spoke.source);
     assert.notEqual(spoke.display, "none", "structural spokes retain one DOM entry per node instead of deleting unknown connections");
     assert.equal(spoke.kind, leaf.kind, "each access spoke retains the leaf's AWG/VLESS identity");
-    assert.ok(!spoke.marker && !spoke.reverseMarker, "an access spoke has no arrow and cannot imply a new VPS-initiated permission");
     const isRoute = routeIds.has(spoke.source);
     const expectedRole = isRoute ? spoke.source === selectedId ? "selected" : "peer" : null;
     assert.equal(spoke.classRoute, isRoute, "only the selected node and confirmed directional peers have a highlighted VPS access segment");
     assert.equal(spoke.route, expectedRole, "route role is cleared in overview, no-access, unknown, disabled and unrelated cases");
     const hasArrow = drawn.some(link => link.source === spoke.source || link.target === spoke.source);
     assert.equal(spoke.permission, hasArrow, "a spoke yields to a real arrow only when the configured VPS permission actually exists");
+    const isDestination = isRoute && !hasArrow && (value.direction === "forward" ? expectedRole === "peer" : expectedRole === "selected");
+    assert.ok(!spoke.marker, "a leaf-to-hub structural segment never gains an extra hub-pointing arrow");
+    assert.equal(Boolean(spoke.reverseMarker), isDestination, "only the actual accessed leaf receives an endpoint arrow, never the source, unknown or unrelated nodes");
+    assert.equal(spoke.routeEnd, isDestination ? spoke.source : null, "the endpoint marker identifies the actual accessed leaf and is cleared on every mode/direction switch");
     if (hasArrow) assert.equal(spoke.opacity, 0, "one genuine VPS authorization is not drawn twice as an overlapping access segment");
     else if (isRoute) {
       assert.ok(spoke.opacity >= .8 && spoke.width >= 1.8, "confirmed path access segments remain visually distinct from background structure");
@@ -258,6 +262,47 @@ async function assertGraph(page, expectedLinks = null) {
       scopes: [...item.querySelectorAll(".topology-access-scopes li")].map(scope => scope.textContent)})));
     assert.deepEqual(rows.sort((a, b) => a.id.localeCompare(b.id)), expected.map(link => ({id: value.direction === "forward" ? link.target : link.source, scopes: link.scopes})).sort((a, b) => a.id.localeCompare(b.id)),
       "inspector contains only the correct endpoint and complete exact scopes for the selected direction");
+  }
+}
+
+async function assertRouteArrowheads(page) {
+  const arrows = await hook(page, "graph").evaluate(graph => {
+    const scale = Number(graph.dataset.viewportScale);
+    return [...graph.querySelectorAll("[data-topology-spoke][marker-start]")].map(line => {
+      const markerId = line.getAttribute("marker-start").match(/#([^)]*)\)/)?.[1];
+      const marker = markerId && document.getElementById(markerId), path = marker?.querySelector("path");
+      const node = [...graph.querySelectorAll("[data-topology-node]")].find(node => node.dataset.topologyNode === line.dataset.source);
+      if (!marker || !path || !node) return {missing: true};
+      const box = node.getBoundingClientRect(), matrix = line.getScreenCTM();
+      const start = line.getPointAtLength(0), end = line.getPointAtLength(line.getTotalLength());
+      const tip = path.getPointAtLength(path.getTotalLength() / 2), left = path.getPointAtLength(0), right = path.getPointAtLength(path.getTotalLength());
+      const ref = {x: Number(marker.getAttribute("refX")), y: Number(marker.getAttribute("refY"))};
+      // auto-start-reverse rotates the marker's forward vector away from the
+      // line's leaf→hub tangent. Measure that vector against the actual leaf.
+      const angle = Math.atan2(end.y - start.y, end.x - start.x) + Math.PI;
+      const rotate = (x, y) => ({x: x * Math.cos(angle) - y * Math.sin(angle), y: x * Math.sin(angle) + y * Math.cos(angle)});
+      const tipOffset = rotate(tip.x - ref.x, tip.y - ref.y), worldTip = new DOMPoint(start.x + tipOffset.x, start.y + tipOffset.y);
+      const screenTip = worldTip.matrixTransform(matrix), direction = rotate(tip.x - (left.x + right.x) / 2, tip.y - (left.y + right.y) / 2);
+      const toward = {x: box.left + box.width / 2 - screenTip.x, y: box.top + box.height / 2 - screenTip.y};
+      return {id: line.dataset.source, routeEnd: line.dataset.topologyRouteEnd, scale,
+        orient: marker.getAttribute("orient"), units: marker.getAttribute("markerUnits"),
+        width: Number(marker.getAttribute("markerWidth")), height: Number(marker.getAttribute("markerHeight")),
+        tip: {x: tip.x, y: tip.y}, ref, color: getComputedStyle(path).stroke, typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color,
+        cosine: (direction.x * toward.x + direction.y * toward.y) / (Math.hypot(direction.x, direction.y) * Math.hypot(toward.x, toward.y)),
+        gap: Math.max(box.left - screenTip.x, screenTip.x - box.right, box.top - screenTip.y, screenTip.y - box.bottom)};
+    });
+  });
+  for (const arrow of arrows) {
+    assert.ok(!arrow.missing, "each access endpoint resolves to a real marker and leaf card");
+    assert.equal(arrow.routeEnd, arrow.id);
+    assert.equal(arrow.orient, "auto-start-reverse", "a start marker points back toward the accessed leaf, not toward the VPS");
+    assert.equal(arrow.units, "userSpaceOnUse", "endpoint arrows use world units and scale with the complete graph");
+    assert.equal(arrow.width, 10); assert.equal(arrow.height, 10);
+    assert.ok(Math.abs(arrow.tip.x - arrow.ref.x) < .01 && Math.abs(arrow.tip.y - arrow.ref.y) < .01, "the marker tip is anchored to the line's leaf endpoint");
+    assert.ok(arrow.cosine > .99, `${arrow.id}: arrowhead actually points toward the destination card`);
+    assert.equal(arrow.color, arrow.typeColor, "the target arrow follows its AWG/VLESS type color");
+    assert.ok(arrow.gap >= 5 * arrow.scale && arrow.gap <= 9 * arrow.scale,
+      `${arrow.id}: arrow tip stays 7 world px outside the actual card (${arrow.gap}px at ${arrow.scale}×)`);
   }
 }
 
@@ -321,11 +366,12 @@ async function zoomSnapshot(page) {
       const point = offset => { const value = edge.getPointAtLength(offset).matrixTransform(matrix); return {x: value.x, y: value.y}; };
       return {id: `${edge.hasAttribute("data-topology-edge") ? "permission" : "spoke"}:${edge.dataset.source}→${edge.dataset.target}`,
         scale, vectorEffect: style.vectorEffect, stroke: parseFloat(style.strokeWidth), dash: style.strokeDasharray,
+        markerStart: edge.getAttribute("marker-start"), markerEnd: edge.getAttribute("marker-end"), routeEnd: edge.dataset.topologyRouteEnd || null,
         length: edge.getTotalLength() * scale, start: point(0), end: point(edge.getTotalLength())};
     });
-    const marker = graph.querySelector("marker");
-    return {scale: Number(graph.dataset.viewportScale), nodes, edges,
-      marker: marker ? {width: Number(marker.getAttribute("markerWidth")), height: Number(marker.getAttribute("markerHeight")), units: marker.getAttribute("markerUnits")} : null};
+    const markers = [...graph.querySelectorAll("marker")].map(marker => ({id: marker.id,
+      width: Number(marker.getAttribute("markerWidth")), height: Number(marker.getAttribute("markerHeight")), units: marker.getAttribute("markerUnits")}));
+    return {scale: Number(graph.dataset.viewportScale), nodes, edges, markers};
   });
 }
 
@@ -365,13 +411,16 @@ function assertProportionalZoom(before, after, label, expectedDirection) {
     assert.notEqual(edge.vectorEffect, "non-scaling-stroke", `${label}: line thickness must scale with cards and text`);
     assert.equal(edge.stroke, oldEdge.stroke);
     assert.equal(edge.dash, oldEdge.dash, `${label}: dashed-line pattern remains in the same world coordinate system`);
+    assert.equal(edge.markerStart, oldEdge.markerStart, `${label}: zoom cannot move or reverse a source-side arrow`);
+    assert.equal(edge.markerEnd, oldEdge.markerEnd, `${label}: zoom cannot move or reverse a target-side arrow`);
+    assert.equal(edge.routeEnd, oldEdge.routeEnd, `${label}: zoom preserves the actual accessed destination`);
     ratio(oldEdge.stroke * oldEdge.scale, edge.stroke * edge.scale, `${edge.id} visual stroke width`);
     ratio(oldEdge.length, edge.length, `${edge.id} visible path length`);
   }
-  assert.deepEqual(after.marker, before.marker, `${label}: arrowheads are not counter-scaled to fixed screen pixels`);
-  if (before.marker) {
-    ratio(before.marker.width * before.scale, after.marker.width * after.scale, "arrowhead visual width");
-    ratio(before.marker.height * before.scale, after.marker.height * after.scale, "arrowhead visual height");
+  assert.deepEqual(after.markers, before.markers, `${label}: every authorization/AWG/VLESS arrowhead avoids counter-scaling to fixed screen pixels`);
+  for (const [index, marker] of before.markers.entries()) {
+    ratio(marker.width * before.scale, after.markers[index].width * after.scale, `${marker.id} arrowhead visual width`);
+    ratio(marker.height * before.scale, after.markers[index].height * after.scale, `${marker.id} arrowhead visual height`);
   }
   report.proportionalZoom.push({label, before: before.scale, after: after.scale, factor, cards: after.nodes.length,
     textRows: after.nodes.reduce((total, node) => total + node.text.length, 0), paths: after.edges.length});
@@ -495,6 +544,57 @@ async function layerSmoke(browser, label) {
   for (const width of [320, 1440]) await inlineScopeScenario(browser, label, width);
 }
 
+async function dragAccessEndpointAfterZoom(state, label, endpointId, links) {
+  const {page, requests} = state;
+  await setLayoutEditing(page, true);
+  const node = page.locator(`[data-topology-node="${endpointId}"]`);
+  await node.scrollIntoViewIfNeeded();
+  const originalBox = await node.boundingBox(), center = {x: originalBox.x + originalBox.width / 2, y: originalBox.y + originalBox.height / 2};
+  assert.equal(await page.evaluate(({x, y}) => document.elementFromPoint(x, y)?.closest("[data-topology-node]")?.dataset.topologyNode, center), endpointId,
+    "the actual destination card is hit-testable before endpoint zoom/drag");
+  const beforeZoom = await zoomSnapshot(page);
+  await openViewTools(page);
+  await hook(page, "zoom-in").click();
+  await closeViewTools(page);
+  // Button zoom is centered on the canvas, so a corner destination may leave
+  // its clipping region. Keyboard focus legitimately recenters that card at
+  // the same magnification before testing its actual pointer interaction.
+  await node.focus();
+  await node.scrollIntoViewIfNeeded();
+  await settleGraph(page);
+  assertProportionalZoom(beforeZoom, await zoomSnapshot(page), `${label}/destination-button`, "in");
+  await assertGraph(page, links);
+  await assertRouteArrowheads(page);
+  await assertCardEdges(page);
+  const before = await layoutState(page), oldPosition = before.positions.find(item => item.id === endpointId);
+  const selected = await hook(page, "select").inputValue(), requestCount = requests.length, scroll = await page.evaluate(() => scrollY);
+  const box = await node.boundingBox(), start = {x: box.x + box.width / 2, y: box.y + box.height / 2};
+  assert.equal(await page.evaluate(({x, y}) => document.elementFromPoint(x, y)?.closest("[data-topology-node]")?.dataset.topologyNode, start), endpointId,
+    `${label}: the magnified destination card remains hit-testable at its center`);
+  await dragPoint(page, start, {x: start.x + 14, y: start.y + 10});
+  const after = await layoutState(page), position = after.positions.find(item => item.id === endpointId), afterBox = await node.boundingBox();
+  const screen = {x: afterBox.x + afterBox.width / 2 - start.x, y: afterBox.y + afterBox.height / 2 - start.y};
+  for (const axis of ["x", "y"]) {
+    assert.ok(Math.abs(screen[axis] - (position[axis] - oldPosition[axis]) * before.viewport.scale) < .15, "dragging a magnified destination respects screen = world × zoom");
+    assert.ok(Math.abs(screen[axis] - ({x: 14, y: 10})[axis]) < 1.5,
+      `${label}: the destination card tracks the pointer after magnification (${axis}: ${screen[axis]}, scale ${before.viewport.scale})`);
+  }
+  assert.deepEqual(after.viewport, before.viewport, "dragging an arrow endpoint preserves pan and zoom");
+  assert.deepEqual(after.positions.filter(item => item.id !== endpointId), before.positions.filter(item => item.id !== endpointId), "other cards do not move with the endpoint");
+  assert.deepEqual(after.ports, before.ports, "dragging the accessed node preserves exact configured port scopes");
+  assert.notDeepEqual(after.spokes.find(item => item.source === endpointId), before.spokes.find(item => item.source === endpointId), "the destination arrow's structural segment follows the dragged card");
+  assert.equal(await hook(page, "select").inputValue(), selected, "endpoint drag never switches the current permission direction");
+  assert.equal(requests.length, requestCount, "endpoint drag is local and does not refresh permissions");
+  assert.equal(await page.evaluate(() => scrollY), scroll, "layout editing captures the drag without scrolling the page");
+  await assertGraph(page, links);
+  await assertRouteArrowheads(page);
+  await assertCardEdges(page);
+  const name = `${label}-zoomed-destination-drag.png`;
+  await hook(page, "graph").screenshot({path: path.join(directory, name), style: captureStyle});
+  report.screenshots.push(name);
+  await setLayoutEditing(page, false);
+}
+
 async function accessRouteScenarios(browser, label) {
   const state = await session(browser, 390);
   const {page, context} = state;
@@ -523,11 +623,12 @@ async function accessRouteScenarios(browser, label) {
     await page.route(jsonRoute, route => route.fulfill({status: 200, contentType: "application/json",
       body: JSON.stringify(modelFor(new URL(route.request().url()).searchParams.get("node")))}));
     for (const scenario of [
-      {name: "leaf-only", selected: source.id, direction: "forward", links: [link(target.id)], routes: 2, arrows: 0},
-      {name: "hub-only", selected: source.id, direction: "forward", links: [link("hub")], routes: 1, arrows: 1},
-      {name: "reverse-leaf", selected: target.id, direction: "reverse", links: [link(target.id)], routes: 2, arrows: 0},
-      {name: "hub-unknown", selected: "hub", direction: "forward", links: [link(target.id)], routes: 0, arrows: 0},
-      {name: "disabled", selected: disabled.id, direction: "forward", links: [link(target.id)], routes: 0, arrows: 0},
+      {name: "leaf-only", selected: source.id, direction: "forward", links: [link(target.id)], routes: 2, arrows: 0, endpoints: [target.id]},
+      {name: "hub-only", selected: source.id, direction: "forward", links: [link("hub")], routes: 1, arrows: 1, endpoints: []},
+      {name: "reverse-leaf", selected: target.id, direction: "reverse", links: [link(target.id)], routes: 2, arrows: 0, endpoints: [target.id]},
+      {name: "reverse-hub", selected: "hub", direction: "reverse", links: [link("hub")], routes: 1, arrows: 1, endpoints: []},
+      {name: "hub-unknown", selected: "hub", direction: "forward", links: [link(target.id)], routes: 0, arrows: 0, endpoints: []},
+      {name: "disabled", selected: disabled.id, direction: "forward", links: [link(target.id)], routes: 0, arrows: 0, endpoints: []},
     ]) {
       links = scenario.links;
       await Promise.all([page.waitForResponse(jsonResponse), hook(page, "refresh").click()]);
@@ -538,16 +639,26 @@ async function accessRouteScenarios(browser, label) {
       await assertGraph(page, links);
       assert.equal(await hook(page, "graph").locator("[data-topology-spoke].is-route").count(), scenario.routes);
       assert.equal(await hook(page, "edge").count(), scenario.arrows);
+      assert.deepEqual(await page.locator("[data-topology-route-end]").evaluateAll(lines => lines.map(line => line.dataset.topologyRouteEnd).sort()), scenario.endpoints,
+        "only actual accessed leaf endpoints gain route arrows; a hub authorization keeps its existing single arrow");
       await assertCardEdges(page);
+      await assertRouteArrowheads(page);
       const name = `${label}-390-access-route-${scenario.name}.png`;
       await hook(page, "graph").screenshot({path: path.join(directory, name), style: captureStyle});
       report.screenshots.push(name);
+      if (scenario.endpoints.length) {
+        await dragAccessEndpointAfterZoom(state, `${label}-390-${scenario.name}`, scenario.endpoints[0], links);
+        await direction(page, scenario.direction === "forward" ? "reverse" : "forward");
+        await assertGraph(page, links);
+        assert.equal(await page.locator("[data-topology-route-end], [data-topology-spoke][marker-start], [data-topology-spoke][marker-end]").count(), 0,
+          "switching to an unconfigured opposite direction removes stale endpoint arrows instead of inventing reverse access");
+      }
       await mode(page, "overview");
       await assertGraph(page, links);
-      assert.equal(await hook(page, "graph").locator("[data-topology-route], .has-permission").count(), 0, "overview clears every route and duplicate-arrow suppression state");
+      assert.equal(await hook(page, "graph").locator("[data-topology-route], [data-topology-route-end], [data-topology-spoke][marker-start], [data-topology-spoke][marker-end], .has-permission").count(), 0, "overview clears every route, terminal marker and duplicate-arrow suppression state");
     }
     await assertReadOnly(state);
-    report.checks.push(`${label}: leaf-only and reverse access highlight both VPS legs without inventing arrows; hub-only uses one actual permission arrow; unknown/disabled/overview clear routes without removing structural DOM`);
+    report.checks.push(`${label}: forward/reverse leaf access marks only the real destination, preserves tip direction and scaled geometry after zoom+drag; hub-only retains one real permission arrow; source/opposite direction/unknown/disabled/overview never gain false arrows`);
   } finally { await context.close(); }
 }
 

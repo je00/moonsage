@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {spawnSync} = require("node:child_process");
 const {chromium, webkit} = require("playwright");
-const {assertCardEdges, assertInlinePorts, geometryFindings} = require("./topology_inline_assertions.cjs");
+const {assertCardEdges, assertInlinePorts, assertMarkerGeometry, geometryFindings} = require("./topology_inline_assertions.cjs");
 const base = new URL(process.argv[2] || "http://127.0.0.1:8808/");
 assert.ok(base.protocol === "http:" && ["localhost", "127.0.0.1"].includes(base.hostname)
   && !base.username && !base.password && base.pathname === "/", "only an isolated loopback preview is allowed");
@@ -74,9 +74,14 @@ async function assertSpokes(page, model, direction, overview = false) {
   const directIds = new Set(expected.filter(link => link.source === "hub" || link.target === "hub").map(link => link.source === "hub" ? link.target : link.source));
   const spokes = await hook(page, "spoke").evaluateAll(items => items.map(spoke => {
     const style = getComputedStyle(spoke), node = document.querySelector(`[data-topology-node="${spoke.dataset.source}"]`);
+    const markerRef = spoke.getAttribute("marker-start"), markerId = markerRef?.match(/#([^)]*)\)/)?.[1], marker = markerId ? document.getElementById(markerId) : null;
     return {source: spoke.dataset.source, target: spoke.dataset.target, classes: [...spoke.classList], route: spoke.dataset.topologyRoute || null,
+      routeEnd: spoke.dataset.topologyRouteEnd || null,
       dash: style.strokeDasharray, stroke: style.stroke, width: parseFloat(style.strokeWidth), opacity: Number(style.opacity), vectorEffect: style.vectorEffect,
-      markerStart: spoke.getAttribute("marker-start"), markerEnd: spoke.getAttribute("marker-end"), typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color};
+      markerStart: markerRef, markerEnd: spoke.getAttribute("marker-end"), typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color,
+      marker: marker ? {id: marker.id, orient: marker.getAttribute("orient"), refX: Number(marker.getAttribute("refX")), refY: Number(marker.getAttribute("refY")),
+        units: marker.getAttribute("markerUnits"), width: Number(marker.getAttribute("markerWidth")), height: Number(marker.getAttribute("markerHeight")),
+        stroke: getComputedStyle(marker.querySelector("path")).stroke} : null};
   }));
   report.routeStyles.push({theme: await page.locator("html").getAttribute("data-theme"), selected: model.selected_id, direction, overview, spokes});
   assert.equal(spokes.length, model.nodes.length - 1, "every leaf retains exactly one structural VPS spoke");
@@ -84,9 +89,22 @@ async function assertSpokes(page, model, direction, overview = false) {
   for (const spoke of spokes) {
     const kind = model.nodes.find(node => node.id === spoke.source).kind;
     const role = peerIds.has(spoke.source) ? "peer" : expected.length && spoke.source === model.selected_id ? "selected" : null;
+    const terminal = !directIds.has(spoke.source) && (direction === "forward" ? role === "peer" : role === "selected");
     assert.equal(spoke.target, "hub", "structural paths always join a leaf to the central VPS");
     assert.notEqual(spoke.dash, "none");
-    assert.ok(!spoke.markerStart && !spoke.markerEnd, "a highlighted connection never invents a permission direction or arrow");
+    assert.equal(spoke.markerEnd, null, "a leaf→VPS structural line never places a terminal arrow at its VPS origin");
+    assert.equal(Boolean(spoke.markerStart), terminal, "only actual destination leaves have arrowheads; origin, overview, disabled, unknown, and direct-hub replacements do not");
+    assert.equal(spoke.routeEnd, terminal ? spoke.source : null, "terminal metadata names only the actual destination and clears on every other view");
+    if (terminal) {
+      assert.ok(spoke.marker, "a visible terminal arrow resolves to a real SVG marker definition");
+      assert.equal(spoke.marker.orient, "auto-start-reverse", "start markers reverse the leaf→hub geometry to point into the actual leaf destination");
+      assert.equal(spoke.marker.refX, 8);
+      assert.equal(spoke.marker.refY, 5);
+      assert.equal(spoke.marker.units, "userSpaceOnUse");
+      assert.equal(spoke.marker.width, 10, "terminal arrows use 10 world units and scale with all other graph elements");
+      assert.equal(spoke.marker.height, 10);
+      assert.equal(spoke.marker.stroke, spoke.typeColor, "terminal arrows retain their destination leaf's AWG/VLESS color");
+    } else assert.equal(spoke.marker, null, "clearing or replacing a route leaves no stray terminal marker");
     assert.ok(spoke.classes.includes(`kind-${kind}`), "each spoke retains the connected leaf's AWG/VLESS type");
     assert.equal(spoke.route, role, "only confirmed peers and a selected node with confirmed access highlight the connection");
     assert.equal(spoke.classes.includes("is-route"), Boolean(role), "route styling and metadata clear together on overview, unknown and no-access views");
@@ -224,6 +242,7 @@ async function overview(page, model, requests) {
   await assertSpokes(page, model, "forward", true);
   await assertInlinePorts(page, model.links, model.selected_id, "forward", true);
   await assertCardEdges(page);
+  await assertMarkerGeometry(page);
   assert.equal(requests.length, beforeRequests, "returning to overview removes peer frames without a fetch");
   assert.deepEqual(await hook(page, "node").evaluateAll(items => items.map(node => ({id: node.dataset.topologyNode, x: node.dataset.worldX, y: node.dataset.worldY}))), before,
     "peer cleanup never rearranges nodes");
@@ -255,6 +274,7 @@ async function assertDirection(page, model, direction, expectedCount) {
   const layoutFindings = geometryFindings(inline);
   assert.deepEqual(layoutFindings, [], "inline port rows are inside non-overlapping cards, including dense hub inbound");
   await assertCardEdges(page);
+  await assertMarkerGeometry(page);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   return layoutFindings;
 }
