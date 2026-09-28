@@ -50,6 +50,14 @@ async function setTheme(page, width, theme) {
   if (width <= 900) await page.locator("[data-mobile-menu-close]").click();
   assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
   await settle(page);
+  const legend = await page.locator(".topology-legend-peer").evaluate(icon => {
+    const style = getComputedStyle(icon);
+    return {text: icon.parentElement.textContent.trim(), borderWidth: parseFloat(style.borderTopWidth), borderStyle: style.borderTopStyle, shadow: style.boxShadow};
+  });
+  assert.equal(legend.text, "色框＋目标/来源：当前方向已授权", "the legend accurately names the simplified frame and direction-aware badge");
+  assert.equal(legend.borderWidth, 2);
+  assert.equal(legend.borderStyle, "solid");
+  assert.equal(legend.shadow, "none", "the legend shows the same single frame without decorative rings");
 }
 
 async function assertPeers(page, model, direction, overview = false) {
@@ -152,7 +160,7 @@ async function peerStyles(page, engine, width, theme, caseName) {
       return {id: node.dataset.topologyNode, kind: node.classList.contains("kind-awg") ? "awg" : node.classList.contains("kind-vless") ? "vless" : "hub",
         selected: node.getAttribute("aria-pressed") === "true", peer: node.classList.contains("is-peer"), stateColor: getComputedStyle(state).color,
         border: style.borderTopColor, background: style.backgroundColor, effectiveBackground: bg, color: blend(color, bg), width: parseFloat(style.borderTopWidth), height: node.getBoundingClientRect().height,
-        shadow: style.boxShadow, shadowColors: (style.boxShadow.match(/(?:rgba?\([^)]*\)|color\([^)]*\))/g) || []).map(rgba), zIndex: Number(style.zIndex), panelBackground, animation: style.animationName,
+        shadow: style.boxShadow, borderStyle: style.borderTopStyle, zIndex: Number(style.zIndex), panelBackground, animation: style.animationName,
         outerFrameContrast: contrast(blend(color, panelBackground), panelBackground), innerFrameContrast: contrast(blend(color, bg), bg),
         fillDifference: Math.hypot(...bg.map((channel, index) => channel - panelBackground[index])),
         peerContrast: peer ? contrast(blend(rgba(getComputedStyle(peer).color), peerBackground), peerBackground) : null,
@@ -172,18 +180,16 @@ async function peerStyles(page, engine, width, theme, caseName) {
     if (item.currentContrast !== null) assert.ok(item.currentContrast >= 4.5, "current-node marker meets normal-text contrast");
     if (item.peer) {
       assert.ok(item.peerContrast >= 4.5, `${engine}/${width}/${theme}/${item.id}: counterpart badge contrast ${item.peerContrast?.toFixed(2)} is readable`);
-      assert.ok(item.outerFrameContrast >= 3 && item.innerFrameContrast >= 3, `${engine}/${width}/${theme}/${item.id}: double type frame contrasts with both separating panel and tinted card`);
+      assert.ok(item.outerFrameContrast >= 3 && item.innerFrameContrast >= 3, `${engine}/${width}/${theme}/${item.id}: the single type border contrasts with both surrounding panel and tinted card`);
       assert.ok(item.fillDifference >= 15, "counterpart card tint differs visibly from unrelated panel-colored cards");
-      assert.match(item.shadow, /0px 0px 0px 2px/, "a separating panel-colored ring is present");
-      assert.match(item.shadow, /0px 0px 0px 4px/, "a second outer type-colored ring is present");
-      assert.ok(item.shadowColors.length >= 2 && Math.hypot(...item.shadowColors[0].slice(0, 3).map((value, index) => value - item.panelBackground[index])) < 2,
-        "the gap between the type frames uses the opaque panel color, including the sky theme");
-      assert.ok(Math.hypot(...item.shadowColors[1].slice(0, 3).map((value, index) => value - item.color[index])) < 2,
-        "the outer ring preserves the node's AWG/VLESS/VPS color, not a generic accent");
+      assert.equal(item.width, 2, "counterparts use a compact single 2 CSS px border");
+      assert.equal(item.borderStyle, "solid");
+      assert.equal(item.shadow, "none", "counterparts have no separating ring, second outer frame, or decorative shadow");
+      assert.equal(item.border, item.stateColor, "the single border preserves the exact node type color");
       assert.equal(item.zIndex, 8, "counterparts retain priority over the current observation node");
       assert.equal(item.animation, "none", "highlighting never adds a continuously moving or pulsing animation");
     } else {
-      assert.doesNotMatch(item.shadow, /0px 0px 0px 4px/, "the current node is not mislabeled with the counterpart double ring");
+      assert.doesNotMatch(item.shadow, /0px 0px 0px [24]px/, "the current node also retains no double-ring decoration");
     }
     if (item.selected) assert.equal(item.border, item.stateColor, "selected card uses its own type color, not an unrelated warm frame");
     const [red, green, blue] = item.color;
@@ -207,21 +213,27 @@ async function focusAndSearch(page, model, engine, width, theme) {
   await settle(page);
   const searchStyle = await target.evaluate(node => {
     const style = getComputedStyle(node);
-    return {matched: node.classList.contains("is-match"), outline: style.outlineStyle, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset), shadow: style.boxShadow};
+    return {matched: node.classList.contains("is-match"), outline: style.outlineStyle, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset), shadow: style.boxShadow,
+      borderWidth: parseFloat(style.borderTopWidth), border: style.borderTopColor, typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color};
   });
   assert.ok(searchStyle.matched && searchStyle.outline === "dashed" && searchStyle.width >= 2 && searchStyle.offset >= 4,
-    "search adds a distinct dashed outline outside, not in place of, the peer ring");
-  assert.match(searchStyle.shadow, /0px 0px 0px 4px/, "search never erases the double counterpart ring");
+    "search adds a distinct dashed outline outside, not in place of, the peer's single border");
+  assert.equal(searchStyle.shadow, "none", "search does not reintroduce decorative rings or shadows");
+  assert.equal(searchStyle.borderWidth, 2);
+  assert.equal(searchStyle.border, searchStyle.typeColor, "search preserves the single type-colored border");
   await page.keyboard.press("Tab");
   await target.focus();
   const focusStyle = await target.evaluate(node => {
     const style = getComputedStyle(node);
-    return {visible: node.matches(":focus-visible"), outline: style.outlineStyle, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset), shadow: style.boxShadow, zIndex: Number(style.zIndex)};
+    return {visible: node.matches(":focus-visible"), outline: style.outlineStyle, width: parseFloat(style.outlineWidth), offset: parseFloat(style.outlineOffset), shadow: style.boxShadow, zIndex: Number(style.zIndex),
+      borderWidth: parseFloat(style.borderTopWidth), border: style.borderTopColor, typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color};
   });
   assert.ok(focusStyle.visible && focusStyle.outline === "solid" && focusStyle.width >= 2 && focusStyle.offset >= 4,
     "keyboard focus remains a distinct solid outline even on a search-matched counterpart");
   assert.equal(focusStyle.zIndex, 10, "keyboard focus remains above peers and the current node");
-  assert.match(focusStyle.shadow, /0px 0px 0px 4px/);
+  assert.equal(focusStyle.shadow, "none", "keyboard focus does not restore a decorative double frame");
+  assert.equal(focusStyle.borderWidth, 2);
+  assert.equal(focusStyle.border, focusStyle.typeColor);
   await hook(page, "search").fill("");
   await hook(page, "view-options").locator("summary").click();
   await hook(page, "fit").click();

@@ -42,13 +42,8 @@ function geometryFindings(snapshot, fit = true) {
     if (fit && outside(node.box, snapshot.box)) findings.push({kind: "card-outside-canvas", node: node.id});
     for (const [kind, box] of [["name", node.name], ["state", node.state]]) if (outside(box, node.box)) findings.push({kind: kind + "-outside-own-card", node: node.id});
     for (const other of snapshot.nodes.slice(index + 1)) if (overlaps(node.box, other.box)) findings.push({kind: "cards-overlap", nodes: [node.id, other.id]});
-    if (fit) {
-      const painted = item => { const spread = item.peerMarker?.visible ? 4 * snapshot.scale : 0; return {left: item.box.left - spread, right: item.box.right + spread, top: item.box.top - spread, bottom: item.box.bottom + spread}; };
-      if (outside(painted(node), snapshot.box)) findings.push({kind: "peer-ring-outside-canvas", node: node.id});
-      for (const other of snapshot.nodes.slice(index + 1)) if ((node.peerMarker?.visible || other.peerMarker?.visible) && overlaps(painted(node), painted(other))) {
-        findings.push({kind: "peer-rings-overlap", nodes: [node.id, other.id]});
-      }
-    }
+    // The single type-colored border is already included in the card box.
+    // There is no external ring or shadow to inflate its painted geometry.
     const markers = [["current", node.marker], ["peer", node.peerMarker]].filter(([, marker]) => marker?.visible);
     if (markers.length > 1) findings.push({kind: "current-and-peer-both-visible", node: node.id});
     for (const [role, marker] of markers) {
@@ -136,14 +131,14 @@ async function assertMarkerGeometry(page, fit = true) {
         });
         const stroke = parseFloat(getComputedStyle(glyph).strokeWidth) / 2 * scale * markerScale;
         const nodeId = end === "start" ? edge.dataset.source : edge.dataset.target;
-        const node = graph.querySelector(`[data-topology-node="${nodeId}"]`), box = rect(node), ring = node.classList.contains("is-peer") ? 4 * scale : 0;
+        const node = graph.querySelector(`[data-topology-node="${nodeId}"]`), box = rect(node);
         const tip = vertices[1], tail = {x: (vertices[0].x + vertices[2].x) / 2, y: (vertices[0].y + vertices[2].y) / 2};
         const towardNode = (tip.x - tail.x) * ((box.left + box.right) / 2 - tip.x) + (tip.y - tail.y) * ((box.top + box.bottom) / 2 - tip.y);
         const bounds = {left: Math.min(...vertices.map(point => point.x)) - stroke, right: Math.max(...vertices.map(point => point.x)) + stroke,
           top: Math.min(...vertices.map(point => point.y)) - stroke, bottom: Math.max(...vertices.map(point => point.y)) + stroke};
         return [{nodeId, id, end, scale, graphBox, bounds, towardNode, glyph: glyph.getAttribute("d"),
           matrixScale: Math.hypot(matrix.a, matrix.b), markerScale,
-          outsideNode: bounds.right <= box.left - ring || bounds.left >= box.right + ring || bounds.bottom <= box.top - ring || bounds.top >= box.bottom + ring}];
+          outsideNode: bounds.right <= box.left || bounds.left >= box.right || bounds.bottom <= box.top || bounds.top >= box.bottom}];
       });
     });
   });
@@ -152,7 +147,7 @@ async function assertMarkerGeometry(page, fit = true) {
     assert.equal(arrow.markerScale, 1, "marker viewport never counteracts whole-graph zoom");
     assert.ok(Math.abs(arrow.matrixScale - arrow.scale) < .001, "the arrow's full geometry follows the graph's screen scale");
     assert.ok(arrow.towardNode > 0, `${arrow.nodeId}: the rendered arrowhead points toward its terminal card, not back toward the route origin`);
-    assert.ok(arrow.outsideNode, `${arrow.nodeId}: terminal arrow remains outside the card and its colored outer ring`);
+    assert.ok(arrow.outsideNode, `${arrow.nodeId}: terminal arrow remains outside the card and its single colored border`);
     if (fit) assert.ok(arrow.bounds.left >= arrow.graphBox.left && arrow.bounds.right <= arrow.graphBox.right
       && arrow.bounds.top >= arrow.graphBox.top && arrow.bounds.bottom <= arrow.graphBox.bottom,
       `${arrow.nodeId}: fitting the graph keeps the entire terminal arrow inside the canvas`);
