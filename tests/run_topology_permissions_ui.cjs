@@ -18,7 +18,7 @@ const packet = JSON.parse(projected.stdout);
 assert.equal(packet.generated_by, "dashboard.topology.build_topology");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "server-kit-topology-permissions-"));
 const quick = process.env.TOPOLOGY_QA_QUICK === "1";
-const report = {directory, quick, projector: packet.generated_by, checks: [], screenshots: [], peerStyles: [], focusStyles: [], layoutFindings: [], requests: [], errors: [], external: []};
+const report = {directory, quick, projector: packet.generated_by, checks: [], screenshots: [], peerStyles: [], routeStyles: [], focusStyles: [], layoutFindings: [], requests: [], errors: [], external: []};
 const topologyURL = new URL("network/topology/", base).href;
 const hook = (page, name) => page.locator(`[data-topology-${name}]`);
 const isJSON = url => url.origin === base.origin && url.pathname === "/network/topology/" && url.searchParams.get("format") === "json";
@@ -66,6 +66,42 @@ async function assertPeers(page, model, direction, overview = false) {
     "a selected node is never its own peer, and the frame records the correct access direction");
   assert.deepEqual(nodes.filter(node => node.badgeVisible).map(node => node.id).sort(), expected, "the visible role badges match the full confirmed peer set exactly");
   assert.ok(nodes.every(node => !node.badgeVisible || node.badge === (direction === "forward" ? "目标" : "来源") && !node.currentVisible), "role words follow direction and never coexist with current");
+}
+
+async function assertSpokes(page, model, direction, overview = false) {
+  const expected = overview ? [] : model.links.filter(link => direction === "forward" ? link.source === model.selected_id : link.target === model.selected_id);
+  const peerIds = new Set(expected.map(link => direction === "forward" ? link.target : link.source));
+  const directIds = new Set(expected.filter(link => link.source === "hub" || link.target === "hub").map(link => link.source === "hub" ? link.target : link.source));
+  const spokes = await hook(page, "spoke").evaluateAll(items => items.map(spoke => {
+    const style = getComputedStyle(spoke), node = document.querySelector(`[data-topology-node="${spoke.dataset.source}"]`);
+    return {source: spoke.dataset.source, target: spoke.dataset.target, classes: [...spoke.classList], route: spoke.dataset.topologyRoute || null,
+      dash: style.strokeDasharray, stroke: style.stroke, width: parseFloat(style.strokeWidth), opacity: Number(style.opacity), vectorEffect: style.vectorEffect,
+      markerStart: spoke.getAttribute("marker-start"), markerEnd: spoke.getAttribute("marker-end"), typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color};
+  }));
+  report.routeStyles.push({theme: await page.locator("html").getAttribute("data-theme"), selected: model.selected_id, direction, overview, spokes});
+  assert.equal(spokes.length, model.nodes.length - 1, "every leaf retains exactly one structural VPS spoke");
+  assert.deepEqual(spokes.map(spoke => spoke.source).sort(), model.nodes.filter(node => node.id !== "hub").map(node => node.id).sort());
+  for (const spoke of spokes) {
+    const kind = model.nodes.find(node => node.id === spoke.source).kind;
+    const role = peerIds.has(spoke.source) ? "peer" : expected.length && spoke.source === model.selected_id ? "selected" : null;
+    assert.equal(spoke.target, "hub", "structural paths always join a leaf to the central VPS");
+    assert.notEqual(spoke.dash, "none");
+    assert.ok(!spoke.markerStart && !spoke.markerEnd, "a highlighted connection never invents a permission direction or arrow");
+    assert.ok(spoke.classes.includes(`kind-${kind}`), "each spoke retains the connected leaf's AWG/VLESS type");
+    assert.equal(spoke.route, role, "only confirmed peers and a selected node with confirmed access highlight the connection");
+    assert.equal(spoke.classes.includes("is-route"), Boolean(role), "route styling and metadata clear together on overview, unknown and no-access views");
+    assert.equal(spoke.classes.includes("has-permission"), directIds.has(spoke.source), "only a real leaf–VPS authorization replaces its structural spoke");
+    assert.equal(spoke.vectorEffect, "none", "line thickness scales with the whole graph");
+    if (role) {
+      assert.equal(spoke.stroke, spoke.typeColor, "the highlighted route uses the connected leaf's own type color");
+      assert.equal(spoke.width, 1.8, "related connections gain a clear local line weight");
+      assert.equal(spoke.opacity, directIds.has(spoke.source) ? 0 : .9,
+        "direct permissions keep one visible arrow, while other relevant connections remain clearly visible");
+    } else if (!overview) {
+      assert.equal(spoke.opacity, .16, "unrelated connections recede without disappearing");
+      assert.equal(spoke.width, .9);
+    } else assert.ok(spoke.opacity > 0, "the overview restores all neutral structural connections");
+  }
 }
 
 async function peerStyles(page, engine, width, theme, caseName) {
@@ -185,6 +221,7 @@ async function overview(page, model, requests) {
   await settle(page);
   assert.equal(await hook(page, "edge").count(), 0);
   await assertPeers(page, model, "forward", true);
+  await assertSpokes(page, model, "forward", true);
   await assertInlinePorts(page, model.links, model.selected_id, "forward", true);
   await assertCardEdges(page);
   assert.equal(requests.length, beforeRequests, "returning to overview removes peer frames without a fetch");
@@ -201,10 +238,7 @@ async function assertDirection(page, model, direction, expectedCount) {
   const expected = model.links.filter(link => direction === "forward" ? link.source === model.selected_id : link.target === model.selected_id);
   assert.equal(expected.length, expectedCount, "the real backend produced the expected number of confirmed directions");
   assert.equal(await hook(page, "node").count(), 12, "all twelve nodes remain on one canvas");
-  const spokes = await hook(page, "spoke").evaluateAll(items => items.map(spoke => ({source: spoke.dataset.source, target: spoke.dataset.target, dash: getComputedStyle(spoke).strokeDasharray})));
-  assert.equal(spokes.length, model.nodes.length - 1, "every leaf retains its structural VPS spoke");
-  assert.deepEqual(spokes.map(spoke => spoke.source).sort(), model.nodes.filter(node => node.id !== "hub").map(node => node.id).sort());
-  assert.ok(spokes.every(spoke => spoke.target === "hub" && spoke.dash !== "none"), "star spokes stay dashed and never connect two leaves");
+  await assertSpokes(page, model, direction);
   const paths = await hook(page, "edge").evaluateAll(edges => edges.map(edge => ({source: edge.dataset.source, target: edge.dataset.target,
     dash: getComputedStyle(edge).strokeDasharray, marker: edge.getAttribute("marker-end"), bidirectional: edge.dataset.bidirectional})));
   const drawn = expected.filter(link => link.source === "hub" || link.target === "hub");
@@ -278,7 +312,7 @@ async function scenario(browser, engine, width) {
     await hook(page, "view-options").locator("summary").click();
     await hook(page, "reset").click();
     await hook(page, "view-options").locator("summary").click();
-    const cardSizes = await hook(page, "node").evaluateAll(items => items.map(node => ({id: node.dataset.topologyNode, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height})));
+    const cardSizes = await hook(page, "node").evaluateAll(items => items.map(node => ({id: node.dataset.topologyNode, width: node.offsetWidth, height: node.offsetHeight})));
     async function inspect(model, direction, expected, theme, name) {
       try {
         const findings = await assertDirection(page, model, direction, expected);
@@ -289,10 +323,10 @@ async function scenario(browser, engine, width) {
         await capture(page, `${engine}-${width}-${theme}-${name}-failure.png`);
         throw error;
       }
-      const actualSizes = await hook(page, "node").evaluateAll(items => items.map(node => ({id: node.dataset.topologyNode, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height})));
+      const actualSizes = await hook(page, "node").evaluateAll(items => items.map(node => ({id: node.dataset.topologyNode, width: node.offsetWidth, height: node.offsetHeight})));
       for (const actual of actualSizes) {
         const initial = cardSizes.find(node => node.id === actual.id);
-        assert.ok(Math.abs(actual.width - initial.width) < .5, "card width stays fixed while height adapts to its visible contents");
+        assert.ok(Math.abs(actual.width - initial.width) < .5, "local card width stays fixed while contents and the whole-graph screen scale may change");
       }
       try { await peerStyles(page, engine, width, theme, name); }
       catch (error) { await capture(page, `${engine}-${width}-${theme}-${name}-style-failure.png`); throw error; }

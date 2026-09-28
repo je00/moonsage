@@ -7,14 +7,15 @@ async function inlineSnapshot(page) {
   return page.locator("[data-topology-graph]").evaluate(graph => {
     const rect = node => { const box = node.getBoundingClientRect(); return {left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height}; };
     const visible = node => Boolean(node && node.getClientRects().length && getComputedStyle(node).display !== "none" && getComputedStyle(node).visibility !== "hidden" && !node.closest("[hidden]"));
-    return {box: rect(graph), floating: graph.querySelectorAll("[data-topology-edge-label], .topology-edge-label").length,
+    return {box: rect(graph), scale: Number(graph.dataset.viewportScale), floating: graph.querySelectorAll("[data-topology-edge-label], .topology-edge-label").length,
       nodes: [...graph.querySelectorAll("[data-topology-node]")].map(node => {
         const ports = node.querySelector("[data-topology-node-ports]"), marker = node.querySelector(".topology-node-selected"), peerMarker = node.querySelector(".topology-node-peer"), more = node.querySelector(".topology-node-ports-more"), rates = node.querySelector(".topology-node-rates");
         const name = node.querySelector("strong"), heightWithBadge = node.offsetHeight, peerWasHidden = peerMarker?.hidden;
         if (visible(peerMarker)) { peerMarker.hidden = true; }
         const heightWithoutBadge = node.offsetHeight;
         if (peerMarker) peerMarker.hidden = peerWasHidden;
-        return {id: node.dataset.topologyNode, selected: node.getAttribute("aria-pressed") === "true", box: rect(node), aria: node.getAttribute("aria-label") || "",
+        return {id: node.dataset.topologyNode, selected: node.getAttribute("aria-pressed") === "true", box: rect(node),
+          localBox: {width: node.offsetWidth, height: node.offsetHeight}, aria: node.getAttribute("aria-label") || "",
           name: rect(node.querySelector("strong")), state: rect(node.querySelector(".topology-node-state")),
           marker: {visible: visible(marker), text: marker?.textContent, box: marker ? rect(marker) : null},
           peerMarker: {exists: Boolean(peerMarker), visible: visible(peerMarker), text: peerMarker?.textContent || "", box: peerMarker ? rect(peerMarker) : null,
@@ -33,15 +34,16 @@ async function inlineSnapshot(page) {
 }
 
 function geometryFindings(snapshot, fit = true) {
-  const outside = (one, two) => one.left < two.left - 1 || one.right > two.right + 1 || one.top < two.top - 1 || one.bottom > two.bottom + 1;
-  const overlaps = (one, two) => Math.min(one.right, two.right) - Math.max(one.left, two.left) > 1 && Math.min(one.bottom, two.bottom) - Math.max(one.top, two.top) > 1;
+  const tolerance = snapshot.scale;
+  const outside = (one, two) => one.left < two.left - tolerance || one.right > two.right + tolerance || one.top < two.top - tolerance || one.bottom > two.bottom + tolerance;
+  const overlaps = (one, two) => Math.min(one.right, two.right) - Math.max(one.left, two.left) > tolerance && Math.min(one.bottom, two.bottom) - Math.max(one.top, two.top) > tolerance;
   const findings = [];
   for (const [index, node] of snapshot.nodes.entries()) {
     if (fit && outside(node.box, snapshot.box)) findings.push({kind: "card-outside-canvas", node: node.id});
     for (const [kind, box] of [["name", node.name], ["state", node.state]]) if (outside(box, node.box)) findings.push({kind: kind + "-outside-own-card", node: node.id});
     for (const other of snapshot.nodes.slice(index + 1)) if (overlaps(node.box, other.box)) findings.push({kind: "cards-overlap", nodes: [node.id, other.id]});
     if (fit) {
-      const painted = item => { const spread = item.peerMarker?.visible ? 4 : 0; return {left: item.box.left - spread, right: item.box.right + spread, top: item.box.top - spread, bottom: item.box.bottom + spread}; };
+      const painted = item => { const spread = item.peerMarker?.visible ? 4 * snapshot.scale : 0; return {left: item.box.left - spread, right: item.box.right + spread, top: item.box.top - spread, bottom: item.box.bottom + spread}; };
       if (outside(painted(node), snapshot.box)) findings.push({kind: "peer-ring-outside-canvas", node: node.id});
       for (const other of snapshot.nodes.slice(index + 1)) if ((node.peerMarker?.visible || other.peerMarker?.visible) && overlaps(painted(node), painted(other))) {
         findings.push({kind: "peer-rings-overlap", nodes: [node.id, other.id]});
@@ -74,6 +76,7 @@ function geometryFindings(snapshot, fit = true) {
 }
 
 function assertCompactCards(snapshot) {
+  assert.ok(Number.isFinite(snapshot.scale) && snapshot.scale > 0, "the canvas exposes a finite positive whole-graph scale");
   for (const node of snapshot.nodes) {
     const count = node.ports.lines.length, more = node.ports.more.visible;
     const extra = node.id === "hub" ? 0 : 16;
@@ -81,30 +84,33 @@ function assertCompactCards(snapshot) {
     assert.equal(node.rates.exists, node.id !== "hub", "only real nodes have a node ↔ VPS rate row, never a misleading hub sum");
     assert.equal(node.rates.visible, node.id !== "hub", "every real node retains its dedicated compact rate row");
     if (node.rates.visible) assert.ok(node.rates.font >= 11, "rates remain readable instead of shrinking to fit");
-    assert.ok(node.box.height >= minimum && node.box.height <= maximum,
-      `${node.id}: ${count} inline rows${more ? " plus extra count" : ""} use compact content height (${node.box.height}px, expected ${minimum}–${maximum})`);
+    assert.ok(node.localBox.height >= minimum && node.localBox.height <= maximum,
+      `${node.id}: ${count} inline rows${more ? " plus extra count" : ""} use compact local content height (${node.localBox.height}px, expected ${minimum}–${maximum})`);
+    for (const dimension of ["width", "height"]) assert.ok(Math.abs(node.box[dimension] - node.localBox[dimension] * snapshot.scale) <= .55 * snapshot.scale + .05,
+      `${node.id}: rendered ${dimension} scales with the entire graph (${node.box[dimension]}px, local ${node.localBox[dimension]}px × ${snapshot.scale})`);
   }
 }
 
 async function assertCardEdges(page) {
   const endpoints = await page.locator("[data-topology-graph]").evaluate(graph => {
+    const scale = Number(graph.dataset.viewportScale);
     const cards = new Map([...graph.querySelectorAll("[data-topology-node]")].map(node => [node.dataset.topologyNode, node.getBoundingClientRect()]));
     const edges = [...graph.querySelectorAll("[data-topology-edge], [data-topology-spoke]")];
     return edges.flatMap(edge => {
       const source = cards.get(edge.dataset.source), target = cards.get(edge.dataset.target);
       // User-created overlaps and the intentionally compressed 40-node stress
       // fixture cannot offer a visible endpoint between two intersecting cards.
-      if (source.left < target.right + 20 && source.right > target.left - 20 && source.top < target.bottom + 20 && source.bottom > target.top - 20) return [];
+      if (source.left < target.right + 20 * scale && source.right > target.left - 20 * scale && source.top < target.bottom + 20 * scale && source.bottom > target.top - 20 * scale) return [];
       const matrix = edge.getScreenCTM();
       return [["source", source, 0], ["target", target, edge.getTotalLength()]].map(([kind, box, length]) => {
         const point = edge.getPointAtLength(length).matrixTransform(matrix);
-        return {source: edge.dataset.source, target: edge.dataset.target, kind,
+        return {source: edge.dataset.source, target: edge.dataset.target, kind, scale,
           distance: Math.max(box.left - point.x, point.x - box.right, box.top - point.y, point.y - box.bottom)};
       });
     });
   });
-  for (const endpoint of endpoints) assert.ok(endpoint.distance >= 5 && endpoint.distance <= 9,
-    `${endpoint.source}→${endpoint.target} ${endpoint.kind}: endpoint stays 7px outside the actual content-sized card (${endpoint.distance}px)`);
+  for (const endpoint of endpoints) assert.ok(endpoint.distance >= 5 * endpoint.scale && endpoint.distance <= 9 * endpoint.scale,
+    `${endpoint.source}→${endpoint.target} ${endpoint.kind}: endpoint stays 7 local px outside the actual content-sized card (${endpoint.distance}px at ${endpoint.scale}×)`);
 }
 
 async function assertInlinePorts(page, links, selectedId, direction, overview = false) {

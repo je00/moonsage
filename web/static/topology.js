@@ -318,8 +318,8 @@
   }
   function sizeCanvas() {
     const rows = Math.ceil((snapshot.nodes.length - 1) / 2);
-    // Cards stay readable at a fixed size while the world zooms. Capping the
-    // canvas height squeezes dense rows until their target rings collide.
+    // Keep the default layout readable without forcing dense graphs into a
+    // short canvas. User zoom then scales the entire diagram uniformly.
     const height = Math.max(480, rows * (layoutHeight() + 20) + (graph.clientWidth < 520 ? 160 : 80));
     graph.style.height = `${height}px`;
   }
@@ -355,9 +355,6 @@
   function applyView(redrawEdges = false) {
     if (!scene) return;
     scene.world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-    scene.world.style.setProperty("--topology-inverse-scale", String(1 / view.scale));
-    scene.marker.setAttribute("markerWidth", String(10 / view.scale));
-    scene.marker.setAttribute("markerHeight", String(10 / view.scale));
     graph.dataset.viewportX = String(view.x);
     graph.dataset.viewportY = String(view.y);
     graph.dataset.viewportScale = String(view.scale);
@@ -369,13 +366,17 @@
   }
   function fitAll() {
     if (!positions.size) return;
-    const points = [...positions.values()];
-    const xs = points.map(point => point.x), ys = points.map(point => point.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    // Fit complete card bounds (including target rings), not just centers.
+    // Geometry stays in world units; only the world transform applies zoom.
+    const bounds = snapshot.nodes.map(node => {
+      const point = positions.get(node.id), size = nodeSize(node.id);
+      return {left: point.x - size.width / 2 - 4, right: point.x + size.width / 2 + 4,
+        top: point.y - size.height / 2 - 4, bottom: point.y + size.height / 2 + 4};
+    });
+    const minX = Math.min(...bounds.map(box => box.left)), maxX = Math.max(...bounds.map(box => box.right));
+    const minY = Math.min(...bounds.map(box => box.top)), maxY = Math.max(...bounds.map(box => box.bottom));
     view.width = graph.clientWidth; view.height = graph.clientHeight;
-    const sizes = snapshot.nodes.map(node => nodeSize(node.id));
-    const size = {width: Math.max(...sizes.map(size => size.width)), height: Math.max(...sizes.map(size => size.height))};
-    view.scale = Math.max(.03, Math.min(1, (view.width - size.width - 32) / Math.max(1, maxX - minX), (view.height - size.height - 64) / Math.max(1, maxY - minY)));
+    view.scale = Math.max(.03, Math.min(1, (view.width - 32) / Math.max(1, maxX - minX), (view.height - 64) / Math.max(1, maxY - minY)));
     view.x = view.width / 2 - (minX + maxX) / 2 * view.scale;
     view.y = view.height / 2 - (minY + maxY) / 2 * view.scale;
     view.fitted = true;
@@ -415,8 +416,8 @@
     const size = nodeSize(id), dx = toward.x - from.x, dy = toward.y - from.y;
     // Intersect the actual card, even when a nearby curve control point is
     // inside it; a midpoint cap would leave the arrow hidden under the card.
-    const fraction = Math.min((size.width / 2 + 7) / view.scale / Math.max(.01, Math.abs(dx)),
-      (size.height / 2 + 7) / view.scale / Math.max(.01, Math.abs(dy)));
+    const fraction = Math.min((size.width / 2 + 7) / Math.max(.01, Math.abs(dx)),
+      (size.height / 2 + 7) / Math.max(.01, Math.abs(dy)));
     return {x: from.x + dx * fraction, y: from.y + dy * fraction};
   }
   function drawLink(edge) {
@@ -436,6 +437,17 @@
     // Never turn a spoke or an unknown relation into access.
     const peers = new Map(displayMode === "relations"
       ? scene.links.map(link => [direction === "forward" ? link.target : link.source, link]) : []);
+    // These undirected spokes show the route through the hub, not extra hub
+    // permissions. A real hub-access arrow replaces its coincident spoke.
+    const hubArrows = new Set(scene.edges.map(edge => edge.source === "hub" ? edge.target : edge.source));
+    for (const spoke of scene.spokes) {
+      const role = peers.has(spoke.source) ? "peer"
+        : peers.size && spoke.source === snapshot.selected_id ? "selected" : "";
+      spoke.line.classList.toggle("is-route", Boolean(role));
+      spoke.line.classList.toggle("has-permission", hubArrows.has(spoke.source));
+      if (role) spoke.line.dataset.topologyRoute = role;
+      else delete spoke.line.dataset.topologyRoute;
+    }
     for (const node of snapshot.nodes) {
       const button = scene.nodes.get(node.id), chosen = node.id === snapshot.selected_id;
       const relation = relations.get(node.id);
@@ -510,7 +522,7 @@
     const definitions = svgElement("defs", {}); definitions.append(marker); diagram.append(definitions);
     scene = {world, marker, links, nodes: new Map(), edges: [], spokes: [], incidents: new Map(snapshot.nodes.map(node => [node.id, new Set()]))};
     for (const node of snapshot.nodes) if (node.id !== "hub") {
-      const line = svgElement("line", {class: "topology-spoke", "data-topology-spoke": "", "data-source": node.id, "data-target": "hub"});
+      const line = svgElement("line", {class: `topology-spoke kind-${node.kind}`, "data-topology-spoke": "", "data-source": node.id, "data-target": "hub"});
       const spoke = {source: node.id, line}; scene.spokes.push(spoke); diagram.append(line); drawSpoke(spoke);
     }
     const pathsLayer = svgElement("g", {});

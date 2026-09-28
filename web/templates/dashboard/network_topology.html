@@ -57,16 +57,16 @@
           <div class="topology-map-pane">
             <div class="topology-touch-controls"><span id="topology-touch-hint" data-topology-touch-hint>滑动页面 · 点选节点</span><button class="secondary-button" type="button" data-topology-layout-edit aria-pressed="false" aria-controls="topology-graph">调整布局</button></div>
             <div class="topology-graph" id="topology-graph" data-topology-graph role="group" tabindex="0" aria-label="全部节点与经 VPS 接入的关系图" aria-describedby="topology-canvas-help topology-touch-hint"></div>
-            <p class="topology-canvas-help" id="topology-canvas-help"><span class="topology-mouse-help">拖动整理 · 滚轮缩放</span><span class="topology-touch-help">点“调整布局”后可拖动、缩放；完成后恢复滑动页面。</span><span class="sr-only">聚焦画布后使用方向键平移、加减键缩放、数字 0 适配全部；聚焦节点后按 Alt 和方向键可移动节点。按 Escape 退出触屏布局调整。</span></p>
+            <p class="topology-canvas-help" id="topology-canvas-help"><span class="topology-mouse-help">拖动整理 · 滚轮整体缩放</span><span class="topology-touch-help">点“调整布局”后可拖动、整体缩放；完成后恢复滑动页面。</span><span class="sr-only">聚焦画布后使用方向键平移、加减键缩放、数字 0 适配全部；聚焦节点后按 Alt 和方向键可移动节点。按 Escape 退出触屏布局调整。</span></p>
           </div>
           <aside class="topology-inspector" data-topology-inspector aria-label="当前节点访问详情"><h3>点一个节点，查看访问端口</h3><p>总览展示接入结构，节点关系按方向查看授权。</p></aside>
         </div>
         <p class="topology-canvas-summary" data-topology-canvas-summary role="status" aria-live="polite"></p>
         <div class="topology-legend" aria-label="图例">
           <span><i class="topology-legend-node kind-awg" aria-hidden="true"></i>AWG</span><span><i class="topology-legend-node kind-vless" aria-hidden="true"></i>VLESS</span><span><i class="topology-legend-node kind-hub" aria-hidden="true"></i>VPS</span><span><i class="topology-legend-peer" aria-hidden="true"></i>双框＋目标/来源：当前方向已授权</span>
-          <span><i class="topology-legend-line structure-line" aria-hidden="true"></i>经 VPS 接入</span><span><i class="topology-legend-line permission-line" aria-hidden="true"></i>VPS 访问授权</span>
+          <span><i class="topology-legend-line structure-line" aria-hidden="true"></i>经 VPS 接入</span><span><i class="topology-legend-line route-line" aria-hidden="true"></i>高亮虚线：当前接入路径</span><span><i class="topology-legend-line permission-line" aria-hidden="true"></i>箭头：VPS 访问授权</span>
         </div>
-        <p class="topology-graph-note">↑ 节点发往 VPS · ↓ 从 VPS 接收，单位 B/s（K/M/G 按 1024 进位），含内外网流量。近期握手不代表实时连通；VLESS 未开启统计时不显示速率。外框和端口仍表示配置授权，叶子间不画箭头。</p>
+        <p class="topology-graph-note">↑ 节点发往 VPS · ↓ 从 VPS 接收，单位 B/s（K/M/G 按 1024 进位），含内外网流量。近期握手不代表实时连通；VLESS 未开启统计时不显示速率。外框和端口表示配置授权；高亮虚线连接当前节点、VPS 与目标/来源，不代表 VPS 另有访问权限，叶子间不画箭头。</p>
       </div>
       <noscript><p class="topology-noscript">当前未启用 JavaScript，交互图暂不可用。可通过上方选择框切换节点，下方提供完整的访问关系。</p></noscript>
     </section>

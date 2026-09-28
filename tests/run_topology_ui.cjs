@@ -12,7 +12,7 @@ if (base.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(base.hostn
     || base.username || base.password || base.pathname !== "/") throw new Error("Only an isolated loopback preview is allowed.");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "server-kit-topology-"));
 console.log(`Topology QA started: ${directory}`);
-const report = {directory, checks: [], screenshots: [], errors: [], blocked: [], performance: [], controlStyles: [], readability: []};
+const report = {directory, checks: [], screenshots: [], errors: [], blocked: [], performance: [], controlStyles: [], readability: [], proportionalZoom: []};
 const password = "Preview-only-2026!";
 const topologyURL = new URL("network/topology/", base).href;
 const hook = (page, name) => page.locator(`[data-topology-${name}]`);
@@ -167,12 +167,21 @@ async function assertGraph(page, expectedLinks = null) {
     const edgeElements = [...graph.querySelectorAll("[data-topology-edge]")].filter(edge => getComputedStyle(edge.closest("[data-topology-link]") || edge).display !== "none");
     const nodes = nodeElements.map(node => ({id: node.dataset.topologyNode, tag: node.tagName, pressed: node.getAttribute("aria-pressed"),
       peer: node.dataset.topologyPeer || null, classPeer: node.classList.contains("is-peer"), related: node.classList.contains("is-related"),
+      kind: node.classList.contains("kind-awg") ? "awg" : node.classList.contains("kind-vless") ? "vless" : "hub",
+      typeColor: getComputedStyle(node.querySelector(".topology-node-state")).color,
       x: Number(node.dataset.worldX), y: Number(node.dataset.worldY)}));
     const selectedId = document.querySelector("[data-topology-select]").value;
     const edges = edgeElements.map(edge => ({tag: edge.tagName.toLowerCase(), source: edge.dataset.source, target: edge.dataset.target,
       key: edge.dataset.linkKey, dash: getComputedStyle(edge).strokeDasharray, marker: edge.getAttribute("marker-end"),
       reverseMarker: edge.getAttribute("marker-start"), bidirectional: edge.dataset.bidirectional === "true"}));
-    const spokes = [...graph.querySelectorAll("[data-topology-spoke]")].filter(line => getComputedStyle(line).display !== "none").map(line => ({source: line.dataset.source, target: line.dataset.target, dash: getComputedStyle(line).strokeDasharray}));
+    const spokes = [...graph.querySelectorAll("[data-topology-spoke]")].map(line => {
+      const style = getComputedStyle(line);
+      return {source: line.dataset.source, target: line.dataset.target, dash: style.strokeDasharray, stroke: style.stroke,
+        opacity: Number(style.opacity), width: parseFloat(style.strokeWidth), display: style.display,
+        route: line.dataset.topologyRoute || null, classRoute: line.classList.contains("is-route"), permission: line.classList.contains("has-permission"),
+        kind: line.classList.contains("kind-awg") ? "awg" : line.classList.contains("kind-vless") ? "vless" : null,
+        marker: line.getAttribute("marker-end"), reverseMarker: line.getAttribute("marker-start")};
+    });
     return {nodes, selectedId, edges, spokes, options: document.querySelector("[data-topology-select]").options.length,
       initialLinks: JSON.parse(document.getElementById("topology-data").textContent).links,
       mode: document.querySelector('[data-topology-mode][aria-pressed="true"]')?.dataset.topologyMode,
@@ -200,6 +209,24 @@ async function assertGraph(page, expectedLinks = null) {
   assert.deepEqual(directions.sort(), drawn.map(edge => [edge.source, edge.target].join("→")).sort(),
     "only confirmed selected-direction permissions involving the VPS have arrows; leaf-to-leaf paths are not mounted");
   const peers = expected.map(link => value.direction === "forward" ? link.target : link.source).sort();
+  const routeIds = new Set(expected.length ? [...peers, selectedId].filter(id => id !== "hub") : []);
+  for (const spoke of spokes) {
+    const leaf = nodes.find(node => node.id === spoke.source);
+    assert.notEqual(spoke.display, "none", "structural spokes retain one DOM entry per node instead of deleting unknown connections");
+    assert.equal(spoke.kind, leaf.kind, "each access spoke retains the leaf's AWG/VLESS identity");
+    assert.ok(!spoke.marker && !spoke.reverseMarker, "an access spoke has no arrow and cannot imply a new VPS-initiated permission");
+    const isRoute = routeIds.has(spoke.source);
+    const expectedRole = isRoute ? spoke.source === selectedId ? "selected" : "peer" : null;
+    assert.equal(spoke.classRoute, isRoute, "only the selected node and confirmed directional peers have a highlighted VPS access segment");
+    assert.equal(spoke.route, expectedRole, "route role is cleared in overview, no-access, unknown, disabled and unrelated cases");
+    const hasArrow = drawn.some(link => link.source === spoke.source || link.target === spoke.source);
+    assert.equal(spoke.permission, hasArrow, "a spoke yields to a real arrow only when the configured VPS permission actually exists");
+    if (hasArrow) assert.equal(spoke.opacity, 0, "one genuine VPS authorization is not drawn twice as an overlapping access segment");
+    else if (isRoute) {
+      assert.ok(spoke.opacity >= .8 && spoke.width >= 1.8, "confirmed path access segments remain visually distinct from background structure");
+      assert.equal(spoke.stroke, leaf.typeColor, "highlighted access segment uses the corresponding leaf type color");
+    } else if (value.mode === "relations") assert.ok(spoke.opacity <= .2, "unrelated structural spokes stay quiet instead of implying confirmed reachability");
+  }
   assert.deepEqual(nodes.filter(node => node.classPeer).map(node => node.id).sort(), peers,
     "leaf-to-leaf permissions still receive peer frames even though their crossing paths are absent");
   assert.deepEqual(nodes.filter(node => node.peer).map(node => node.id).sort(), peers);
@@ -273,6 +300,81 @@ async function layoutState(page) {
 
 async function settleGraph(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function zoomSnapshot(page) {
+  return hook(page, "graph").evaluate(graph => {
+    const rect = element => {
+      const box = element.getBoundingClientRect();
+      return {width: box.width, height: box.height, x: box.left + box.width / 2, y: box.top + box.height / 2};
+    };
+    const visible = element => element && !element.closest("[hidden]") && element.getClientRects().length;
+    const nodes = [...graph.querySelectorAll("[data-topology-node]")].map(node => ({id: node.dataset.topologyNode,
+      world: {x: Number(node.dataset.worldX), y: Number(node.dataset.worldY)}, box: rect(node),
+      local: {width: node.offsetWidth, height: node.offsetHeight},
+      text: [...node.querySelectorAll("strong, .topology-node-state, .topology-node-port, .topology-node-rates, .topology-node-selected, .topology-node-peer")]
+        .filter(visible).map(element => ({kind: element.className || "name", box: rect(element), font: parseFloat(getComputedStyle(element).fontSize)})),
+      scopes: [...node.querySelectorAll(".topology-node-port")].map(port => port.dataset.topologyScope),
+    }));
+    const edges = [...graph.querySelectorAll("[data-topology-edge], [data-topology-spoke]")].map(edge => {
+      const matrix = edge.getScreenCTM(), scale = Math.hypot(matrix.a, matrix.b), style = getComputedStyle(edge);
+      const point = offset => { const value = edge.getPointAtLength(offset).matrixTransform(matrix); return {x: value.x, y: value.y}; };
+      return {id: `${edge.hasAttribute("data-topology-edge") ? "permission" : "spoke"}:${edge.dataset.source}→${edge.dataset.target}`,
+        scale, vectorEffect: style.vectorEffect, stroke: parseFloat(style.strokeWidth), dash: style.strokeDasharray,
+        length: edge.getTotalLength() * scale, start: point(0), end: point(edge.getTotalLength())};
+    });
+    const marker = graph.querySelector("marker");
+    return {scale: Number(graph.dataset.viewportScale), nodes, edges,
+      marker: marker ? {width: Number(marker.getAttribute("markerWidth")), height: Number(marker.getAttribute("markerHeight")), units: marker.getAttribute("markerUnits")} : null};
+  });
+}
+
+function assertProportionalZoom(before, after, label, expectedDirection) {
+  const factor = after.scale / before.scale;
+  assert.ok(expectedDirection === "in" ? factor > 1.001 : factor < .999, `${label}: actual zoom changes in the requested direction`);
+  const ratio = (oldValue, newValue, description, tolerance = .025) => {
+    assert.ok(oldValue > 0 && newValue > 0, `${label}: ${description} has nonzero geometry`);
+    assert.ok(Math.abs(newValue / oldValue - factor) <= tolerance,
+      `${label}: ${description} scales with the whole graph (${newValue / oldValue}, expected ${factor})`);
+  };
+  assert.deepEqual(after.nodes.map(node => node.id), before.nodes.map(node => node.id));
+  for (const [index, previous] of before.nodes.entries()) {
+    const current = after.nodes[index];
+    assert.deepEqual(current.world, previous.world, `${label}: zoom does not rearrange the saved world layout`);
+    assert.deepEqual(current.local, previous.local, `${label}: zoom preserves local card layout rather than changing just spacing`);
+    assert.deepEqual(current.scopes, previous.scopes, `${label}: all configured port scopes remain intact`);
+    ratio(previous.box.width, current.box.width, `${previous.id} card width`);
+    ratio(previous.box.height, current.box.height, `${previous.id} card height`);
+    assert.deepEqual(current.text.map(item => item.kind), previous.text.map(item => item.kind));
+    for (const [textIndex, oldText] of previous.text.entries()) {
+      const newText = current.text[textIndex];
+      assert.equal(newText.font, oldText.font, `${label}: local text metrics do not change independently of the world`);
+      ratio(oldText.box.height, newText.box.height, `${previous.id} ${oldText.kind} visual text height`);
+      ratio(oldText.box.width, newText.box.width, `${previous.id} ${oldText.kind} row width`);
+    }
+  }
+  const oldHub = before.nodes.find(node => node.id === "hub"), newHub = after.nodes.find(node => node.id === "hub");
+  for (const [index, node] of before.nodes.entries()) {
+    if (node.id === "hub") continue;
+    ratio(Math.hypot(node.box.x - oldHub.box.x, node.box.y - oldHub.box.y),
+      Math.hypot(after.nodes[index].box.x - newHub.box.x, after.nodes[index].box.y - newHub.box.y), `${node.id} center-to-hub distance`);
+  }
+  assert.deepEqual(after.edges.map(edge => edge.id), before.edges.map(edge => edge.id), `${label}: zoom never creates or reverses a connection`);
+  for (const [index, oldEdge] of before.edges.entries()) {
+    const edge = after.edges[index];
+    assert.notEqual(edge.vectorEffect, "non-scaling-stroke", `${label}: line thickness must scale with cards and text`);
+    assert.equal(edge.stroke, oldEdge.stroke);
+    assert.equal(edge.dash, oldEdge.dash, `${label}: dashed-line pattern remains in the same world coordinate system`);
+    ratio(oldEdge.stroke * oldEdge.scale, edge.stroke * edge.scale, `${edge.id} visual stroke width`);
+    ratio(oldEdge.length, edge.length, `${edge.id} visible path length`);
+  }
+  assert.deepEqual(after.marker, before.marker, `${label}: arrowheads are not counter-scaled to fixed screen pixels`);
+  if (before.marker) {
+    ratio(before.marker.width * before.scale, after.marker.width * after.scale, "arrowhead visual width");
+    ratio(before.marker.height * before.scale, after.marker.height * after.scale, "arrowhead visual height");
+  }
+  report.proportionalZoom.push({label, before: before.scale, after: after.scale, factor, cards: after.nodes.length,
+    textRows: after.nodes.reduce((total, node) => total + node.text.length, 0), paths: after.edges.length});
 }
 
 async function readabilitySnapshot(page) {
@@ -391,6 +493,62 @@ async function readabilityAudit(browser, label) {
 async function layerSmoke(browser, label) {
   // Keep the historic --layer-smoke entry point while checking the new design.
   for (const width of [320, 1440]) await inlineScopeScenario(browser, label, width);
+}
+
+async function accessRouteScenarios(browser, label) {
+  const state = await session(browser, 390);
+  const {page, context} = state;
+  try {
+    const original = await (await context.request.get(topologyURL + "?format=json")).json();
+    const fixture = realisticModel(original);
+    const source = fixture.nodes.find(node => node.kind === "vless" && node.availability === "enabled");
+    const target = fixture.nodes.find(node => node.kind === "awg");
+    const disabled = fixture.nodes.find(node => node.availability === "disabled");
+    const link = destination => ({source: source.id, target: destination, status: "partial", label: "TCP · 22", scopes: ["TCP · 22"]});
+    let links = [];
+    const modelFor = id => {
+      const model = realisticModel(original, id), selected = model.selected;
+      const access = (from, to) => {
+        const permission = links.find(item => item.source === from.id && item.target === to.id);
+        if (permission) return {status: "partial", label: "配置授权", summary: permission.label, scopes: permission.scopes, warnings: []};
+        const status = from.kind === "hub" ? "unknown" : from.availability === "disabled" || to.availability === "disabled" ? "inactive" : to.kind === "vless" ? "not_applicable" : "denied";
+        return {status, label: "未确认授权", summary: "无已确认配置授权", scopes: [], warnings: []};
+      };
+      return {...model, links, relations: model.nodes.filter(node => node.id !== selected.id).map(node => {
+        const forward = access(selected, node), reverse = access(node, selected);
+        const out = forward.status === "partial", incoming = reverse.status === "partial";
+        return {node, forward, reverse, relation: out && incoming ? "mutual" : out ? "outbound" : incoming ? "inbound" : "unknown", label: "配置访问关系"};
+      })};
+    };
+    await page.route(jsonRoute, route => route.fulfill({status: 200, contentType: "application/json",
+      body: JSON.stringify(modelFor(new URL(route.request().url()).searchParams.get("node")))}));
+    for (const scenario of [
+      {name: "leaf-only", selected: source.id, direction: "forward", links: [link(target.id)], routes: 2, arrows: 0},
+      {name: "hub-only", selected: source.id, direction: "forward", links: [link("hub")], routes: 1, arrows: 1},
+      {name: "reverse-leaf", selected: target.id, direction: "reverse", links: [link(target.id)], routes: 2, arrows: 0},
+      {name: "hub-unknown", selected: "hub", direction: "forward", links: [link(target.id)], routes: 0, arrows: 0},
+      {name: "disabled", selected: disabled.id, direction: "forward", links: [link(target.id)], routes: 0, arrows: 0},
+    ]) {
+      links = scenario.links;
+      await Promise.all([page.waitForResponse(jsonResponse), hook(page, "refresh").click()]);
+      await page.waitForFunction(() => !document.querySelector("[data-topology-root]").hasAttribute("aria-busy"));
+      await selectAndWait(page, scenario.selected);
+      await direction(page, scenario.direction);
+      await hook(page, "fit").click();
+      await assertGraph(page, links);
+      assert.equal(await hook(page, "graph").locator("[data-topology-spoke].is-route").count(), scenario.routes);
+      assert.equal(await hook(page, "edge").count(), scenario.arrows);
+      await assertCardEdges(page);
+      const name = `${label}-390-access-route-${scenario.name}.png`;
+      await hook(page, "graph").screenshot({path: path.join(directory, name), style: captureStyle});
+      report.screenshots.push(name);
+      await mode(page, "overview");
+      await assertGraph(page, links);
+      assert.equal(await hook(page, "graph").locator("[data-topology-route], .has-permission").count(), 0, "overview clears every route and duplicate-arrow suppression state");
+    }
+    await assertReadOnly(state);
+    report.checks.push(`${label}: leaf-only and reverse access highlight both VPS legs without inventing arrows; hub-only uses one actual permission arrow; unknown/disabled/overview clear routes without removing structural DOM`);
+  } finally { await context.close(); }
 }
 
 async function inlineScopeScenario(browser, label, width) {
@@ -758,17 +916,24 @@ async function directManipulation(browser, label, width, touch = false) {
     if (touch) assert.equal(await page.evaluate(() => scrollY), beforePanScroll, "touch panning stays inside the graph");
     const beforeZoom = panned.viewport.scale;
     await openViewTools(page);
+    const beforeButtonZoom = await zoomSnapshot(page);
     await hook(page, "zoom-in").click();
     await settleGraph(page);
+    const afterButtonZoom = await zoomSnapshot(page);
+    assertProportionalZoom(beforeButtonZoom, afterButtonZoom, `${label}/${width}/button-in`, "in");
+    await assertCardEdges(page);
     assert.ok((await layoutState(page)).viewport.scale > beforeZoom, "zoom-in raises scale");
     await hook(page, "zoom-out").click();
     await settleGraph(page);
+    assertProportionalZoom(afterButtonZoom, await zoomSnapshot(page), `${label}/${width}/button-out`, "out");
+    await assertCardEdges(page);
     assert.ok((await layoutState(page)).viewport.scale < beforeZoom * 1.01, "zoom-out lowers scale");
     await closeViewTools(page);
     await hook(page, "graph").scrollIntoViewIfNeeded();
     const zoomBox = await hook(page, "graph").boundingBox();
     const gestureScale = (await layoutState(page)).viewport.scale;
     const gestureScroll = await page.evaluate(() => scrollY);
+    const beforeGestureZoom = await zoomSnapshot(page);
     if (touch) {
       const channel = await page.context().newCDPSession(page);
       const center = {x: zoomBox.x + zoomBox.width / 2, y: zoomBox.y + zoomBox.height / 2};
@@ -785,6 +950,8 @@ async function directManipulation(browser, label, width, touch = false) {
       await page.mouse.wheel(0, -180);
     }
     await settleGraph(page);
+    assertProportionalZoom(beforeGestureZoom, await zoomSnapshot(page), `${label}/${width}/${touch ? "pinch" : "wheel"}`, "in");
+    await assertCardEdges(page);
     assert.ok((await layoutState(page)).viewport.scale > gestureScale, `${touch ? "pinch" : "wheel"} zoom changes scale`);
     assert.equal(await page.evaluate(() => scrollY), gestureScroll, "zoom gesture does not scroll the document");
     await hook(page, "fit").click();
@@ -799,6 +966,15 @@ async function directManipulation(browser, label, width, touch = false) {
     await screenshot(page, `${label}-${width}-${touch ? "touch" : "mouse"}-dragged`);
     if (!touch) {
       await hook(page, "graph").focus();
+      const beforeKeyboardZoom = await zoomSnapshot(page);
+      await page.keyboard.press("+");
+      await settleGraph(page);
+      const afterKeyboardZoom = await zoomSnapshot(page);
+      assertProportionalZoom(beforeKeyboardZoom, afterKeyboardZoom, `${label}/${width}/keyboard-in`, "in");
+      await assertCardEdges(page);
+      await page.keyboard.press("-");
+      await settleGraph(page);
+      assertProportionalZoom(afterKeyboardZoom, await zoomSnapshot(page), `${label}/${width}/keyboard-out`, "out");
       const keyboardView = (await layoutState(page)).viewport;
       await page.keyboard.press("ArrowRight");
       await settleGraph(page);
@@ -1329,6 +1505,7 @@ async function fixturesAndFallback(browser, label) {
         if (process.argv.includes("--visual-only")) continue;
         await layerSmoke(browser, label);
         await layerPriority(browser, label);
+        await accessRouteScenarios(browser, label);
         if (!process.argv.includes("--theme-gesture-only")) await keyboardAndErrors(browser, label);
         if (process.argv.includes("--keyboard-only")) continue;
         await directManipulation(browser, label, 1440);
