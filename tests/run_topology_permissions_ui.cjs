@@ -152,6 +152,7 @@ async function peerStyles(page, engine, width, theme, caseName) {
     };
     const contrast = (a, b) => { const first = luminance(a), second = luminance(b); return (Math.max(first, second) + .05) / (Math.min(first, second) + .05); };
     const panelBackground = background(document.querySelector(".topology-panel"));
+    const canvasBackground = background(document.querySelector("[data-topology-graph]"));
     return nodes.filter(node => node.classList.contains("is-peer") || node.getAttribute("aria-pressed") === "true").map(node => {
       const style = getComputedStyle(node), bg = background(node), name = node.querySelector("strong"), state = node.querySelector(".topology-node-state");
       const marker = node.querySelector(".topology-node-selected:not([hidden])"), markerBackground = marker ? background(marker) : null;
@@ -162,6 +163,7 @@ async function peerStyles(page, engine, width, theme, caseName) {
         border: style.borderTopColor, background: style.backgroundColor, effectiveBackground: bg, color: blend(color, bg), width: parseFloat(style.borderTopWidth), height: node.getBoundingClientRect().height,
         shadow: style.boxShadow, borderStyle: style.borderTopStyle, zIndex: Number(style.zIndex), panelBackground, animation: style.animationName,
         outerFrameContrast: contrast(blend(color, panelBackground), panelBackground), innerFrameContrast: contrast(blend(color, bg), bg),
+        canvasFrameContrast: contrast(blend(color, canvasBackground), canvasBackground),
         fillDifference: Math.hypot(...bg.map((channel, index) => channel - panelBackground[index])),
         peerContrast: peer ? contrast(blend(rgba(getComputedStyle(peer).color), peerBackground), peerBackground) : null,
         portContrasts: [...node.querySelectorAll(".topology-node-port")].map(port => contrast(blend(rgba(getComputedStyle(port).color), bg), bg)),
@@ -181,6 +183,7 @@ async function peerStyles(page, engine, width, theme, caseName) {
     if (item.peer) {
       assert.ok(item.peerContrast >= 4.5, `${engine}/${width}/${theme}/${item.id}: counterpart badge contrast ${item.peerContrast?.toFixed(2)} is readable`);
       assert.ok(item.outerFrameContrast >= 3 && item.innerFrameContrast >= 3, `${engine}/${width}/${theme}/${item.id}: the single type border contrasts with both surrounding panel and tinted card`);
+      assert.ok(item.canvasFrameContrast >= 3, `${engine}/${width}/${theme}/${item.id}: the single type border contrasts with the actual canvas background`);
       assert.ok(item.fillDifference >= 15, "counterpart card tint differs visibly from unrelated panel-colored cards");
       assert.equal(item.width, 2, "counterparts use a compact single 2 CSS px border");
       assert.equal(item.borderStyle, "solid");
@@ -195,7 +198,7 @@ async function peerStyles(page, engine, width, theme, caseName) {
     const [red, green, blue] = item.color;
     if (item.kind === "awg") assert.ok(blue > red + 15 && green > red, "AWG peers use a recognizable blue frame");
     if (item.kind === "vless") assert.ok(blue > green + 15 && red > green + 10, "VLESS peers use a recognizable purple frame");
-    if (item.kind === "hub") assert.ok(red > blue + 25 && red > green + 10, "VPS peers use a recognizable warm frame");
+    if (item.kind === "hub") assert.ok(blue > red + 20 && blue > green + 10, "VPS peers use a recognizable moon-blue frame");
   }
   const byKind = Object.values(Object.fromEntries(styles.map(item => [item.kind, item])));
   for (let first = 0; first < byKind.length; first++) for (let second = first + 1; second < byKind.length; second++) {
@@ -383,7 +386,7 @@ async function scenario(browser, engine, width) {
       await inspect(partialModel, "forward", 1, theme, "phone-hub-tcp-udp");
       const hubScopes = await hook(page, "inspector").locator('.topology-access-scopes li').allTextContents();
       assert.deepEqual(hubScopes, ["TCP · 22, 9080", "UDP · 53, 123"]);
-      // A new partial target must replace, not accumulate with, the warm VPS frame.
+      // A new partial target must replace, not accumulate with, the moon-blue VPS frame.
       await select(page, nasModel.selected_id);
       await inspect(nasModel, "forward", 1, theme, "phone-nas-only");
       assert.equal(await hook(page, "edge").count(), 0, "NAS-only phone has no permission arrows while its target remains visible");
