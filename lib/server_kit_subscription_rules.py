@@ -97,8 +97,8 @@ def normalize_server(value: object, route: str) -> str:
             or address.is_multicast or getattr(address, "scope_id", None)
             or getattr(address, "ipv4_mapped", None)):
         raise SubscriptionRulesError("DNS 服务器不能使用本机、链路本地、组播或未指定地址。")
-    if route == "PROXY" and (not is_doh or not address.is_global):
-        raise SubscriptionRulesError("跟随代理出口的 DNS 必须使用公网数字 IP HTTPS DoH。")
+    if route in {"PROXY", "MID"} and (not is_doh or not address.is_global):
+        raise SubscriptionRulesError("经代理或 VPS 查询的 DNS 必须使用公网数字 IP HTTPS DoH。")
     reserved = RESERVED_RESOLVER_ROUTES.get(str(address))
     if reserved is not None and reserved != route:
         raise SubscriptionRulesError("该 DNS IP 已用于统一出口或启动解析，不能改为其他线路。")
@@ -144,8 +144,8 @@ def normalize_config(value: object) -> dict:
             clean = {"match": match, "value": normalized}
             if kind == "dns_rules":
                 route = item["route"]
-                if route not in ("DIRECT", "PROXY"):
-                    raise SubscriptionRulesError("DNS 线路只能选择直连或跟随代理出口。")
+                if route not in ("DIRECT", "PROXY", "MID"):
+                    raise SubscriptionRulesError("DNS 路径只能选择代理出口、VPS 或本机直连。")
                 servers = item["servers"]
                 if not isinstance(servers, list) or not 1 <= len(servers) <= 4:
                     raise SubscriptionRulesError("每条 DNS 规则需要 1 至 4 个服务器。")
@@ -155,7 +155,7 @@ def normalize_config(value: object) -> dict:
                 for server in servers:
                     address = resolver_address(server)
                     if address in resolver_routes and resolver_routes[address] != route:
-                        raise SubscriptionRulesError("同一 DNS IP 不能同时走直连和代理。")
+                        raise SubscriptionRulesError("同一 DNS IP 不能使用不同查询路径。")
                     resolver_routes[address] = route
                 clean.update(servers=servers, route=route)
             result[kind].append(clean)

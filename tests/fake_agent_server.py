@@ -46,6 +46,8 @@ class PreviewAgent:
                 "dns_rules": [] if scenario == "empty" else [
                     {"match": "suffix", "value": "resolver-demo.example", "route": "DIRECT",
                      "servers": ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]},
+                    {"match": "exact", "value": "vps-resolver-demo.example", "route": "MID",
+                     "servers": ["https://9.9.9.9/dns-query"]},
                 ],
             })
 

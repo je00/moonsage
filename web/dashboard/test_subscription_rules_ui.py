@@ -101,8 +101,8 @@ class SubscriptionRulesUITests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, "direct.example.com")
         self.assertContains(response, "https://8.8.8.8/dns-query")
-        self.assertContains(response, "通过当前代理出口查询")
-        self.assertContains(response, "客户端 → 当前代理出口 → 指定 DNS")
+        self.assertContains(response, "走出口")
+        self.assertContains(response, "设备 → 所选出口 → DNS")
         self.assertNotContains(response, "跟随选中出口")
         self.assertNotContains(response, "data-rules-form")
         self.assertNotContains(response, "data-rule-template")
@@ -113,12 +113,13 @@ class SubscriptionRulesUITests(TestCase):
 
     def test_dns_route_options_describe_query_path_without_changing_wire_values(self):
         response = self.client.get(self.url)
-        for text in ("DNS 查询怎么走", "客户端 → 当前代理出口 → 指定 DNS",
-                     "随客户端 PROXY 组的选择切换。", "只改变 DNS 查询路径，不改变网站流量。",
+        for text in ("DNS 路径", "设备 → 所选出口 → DNS",
+                     "跟随客户端 PROXY 选择。", "只改变 DNS 查询路径，不改变网站流量。",
                      "data-rule-route-preview", "data-rule-route-help"):
             self.assertContains(response, text)
-        self.assertContains(response, '<option value="PROXY" selected>通过当前代理出口查询</option>', html=True)
-        self.assertContains(response, '<option value="DIRECT">不走代理，直接查询</option>', html=True)
+        self.assertContains(response, '<option value="PROXY" selected>走出口</option>', html=True)
+        self.assertContains(response, '<option value="MID">走 VPS（MID）</option>', html=True)
+        self.assertContains(response, '<option value="DIRECT">本机直连</option>', html=True)
         self.assertNotContains(response, "跟随选中出口")
         self.assertNotContains(response, "直连（显式例外）")
         self.preview.assert_not_called()
@@ -128,11 +129,26 @@ class SubscriptionRulesUITests(TestCase):
         self.status.return_value["dns_rules"][0].update(route="DIRECT", servers=["223.5.5.5"])
         self.client.force_login(self.viewer)
         response = self.client.get(self.url)
-        self.assertContains(response, "不走代理，直接查询")
-        self.assertContains(response, "客户端 → 指定 DNS（不走代理）")
-        self.assertContains(response, "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。")
+        self.assertContains(response, "本机直连")
+        self.assertContains(response, "设备 → DNS")
+        self.assertContains(response, "不经过客户端代理。")
         self.assertNotContains(response, "data-rules-form")
         self.assertNotContains(response, "跟随选中出口")
+
+    def test_existing_mid_dns_path_is_readable_and_keeps_saved_selection(self):
+        self.status.return_value["dns_rules"][0].update(route="MID", servers=["https://9.9.9.9/dns-query"])
+        response = self.client.get(self.url)
+        self.assertContains(response, '<option value="MID" selected>走 VPS（MID）</option>', html=True)
+        self.assertContains(response, "设备 → VPS → DNS")
+        self.assertContains(response, "VPS 直出，不走出口节点。")
+        self.client.force_login(self.viewer)
+        response = self.client.get(self.url)
+        self.assertContains(response, "走 VPS（MID）")
+        self.assertContains(response, "设备 → VPS → DNS")
+        self.assertContains(response, "VPS 直出，不走出口节点。")
+        self.assertNotContains(response, "data-rules-form")
+        self.preview.assert_not_called()
+        self.confirm.assert_not_called()
 
     def test_writes_disabled_has_no_editor(self):
         self.overview.return_value["writes_enabled"] = False
@@ -199,7 +215,7 @@ class SubscriptionRulesUITests(TestCase):
             {"direct_match": ["suffix"]}, {"expected_revision": ""},
             {"direct_value": ["https://example.com", "192.168.50.0/24"]},
             {"direct_value": ["a.example.com", "192.168.50.1/24"]},
-            {"dns_route": ["MID"]}, {"dns_servers": ["https://dns.example.com/dns-query"]},
+            {"dns_route": ["AUTO"]}, {"dns_servers": ["https://dns.example.com/dns-query"]},
             {"dns_servers": ["8.8.8.8"]}, {"dns_servers": ["https://8.8.8.8/dns-query#DIRECT"]},
             {"dns_servers": ["https://8.8.8.8/dns-query " * 5]},
             {"direct_match": ["suffix"] * 129, "direct_value": ["a.example.com"] * 129},
@@ -214,12 +230,25 @@ class SubscriptionRulesUITests(TestCase):
     def test_direct_dns_only_exception_is_explicit(self):
         self.status.return_value["dns_rules"][0].update(route="DIRECT", servers=["223.5.5.5"])
         response = self.client.get(self.url)
-        self.assertContains(response, "客户端 → 指定 DNS（不走代理）")
-        self.assertContains(response, "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。")
+        self.assertContains(response, "设备 → DNS")
+        self.assertContains(response, "不经过客户端代理。")
         self.assertContains(response, 'value="DIRECT" selected')
         response = self.client.post(self.preview_url, self.data(dns_route=["DIRECT"], dns_servers=["223.5.5.5\n1.12.12.12"]))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.preview.call_args.args[1][0]["servers"], ["223.5.5.5", "1.12.12.12"])
+
+    def test_mid_dns_submits_without_changing_direct_rules(self):
+        response = self.client.post(self.preview_url, self.data(
+            dns_route=["MID"], dns_servers=["https://9.9.9.9/dns-query"],
+        ))
+        self.assertEqual(response.status_code, 200)
+        self.preview.assert_called_once_with([
+            {"match": "suffix", "value": "direct.example.com"},
+            {"match": "cidr", "value": "192.168.50.0/24"},
+        ], [{"match": "exact", "value": "dns.example.com", "servers": [
+            "https://9.9.9.9/dns-query",
+        ], "route": "MID"}], "rules-admin", REVISION)
+        self.confirm.assert_not_called()
 
     def test_read_failure_or_concurrent_update_never_overwrites(self):
         self.status.side_effect = OSError("private")

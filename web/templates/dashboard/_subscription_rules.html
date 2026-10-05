@@ -23,7 +23,7 @@
   {% else %}
   <div class="subscription-rules-readonly">
     <section><h3>指定直连</h3>{% for rule in subscription_rules.direct_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% elif rule.match == 'cidr' %}IP 网段{% else %}完整域名{% endif %} · 直连</small></article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
-    <section><h3>指定 DNS</h3>{% for rule in subscription_rules.dns_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% else %}完整域名{% endif %} · {% if rule.route == 'DIRECT' %}不走代理，直接查询{% else %}通过当前代理出口查询{% endif %}</small><code>{{ rule.servers|join:' · ' }}</code>{% include "dashboard/_subscription_dns_path.html" %}</article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
+    <section><h3>指定 DNS</h3>{% for rule in subscription_rules.dns_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% else %}完整域名{% endif %} · {% if rule.route == 'DIRECT' %}本机直连{% elif rule.route == 'MID' %}走 VPS（MID）{% else %}走出口{% endif %}</small><code>{{ rule.servers|join:' · ' }}</code>{% include "dashboard/_subscription_dns_path.html" %}</article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
   </div><p class="privacy-note">当前为只读模式；仅影响生成的 Clash / Stash 订阅。</p>
   {% endif %}
   {% endif %}

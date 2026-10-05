@@ -16,6 +16,24 @@ from preview_fixtures import SERVICE_IDS, TASK_IDS, build_fixtures
 
 
 class WebPreviewTests(unittest.TestCase):
+    def test_subscription_rules_mid_fixture_and_save_preserve_query_route(self):
+        agent = PreviewAgent()
+        before = agent.dispatch('network.subscription_rules.status', {})
+        self.assertEqual([rule['route'] for rule in before['dns_rules']], ['DIRECT', 'MID'])
+        rules = [{'match': 'exact', 'value': 'vps-dns.example', 'route': 'MID',
+                  'servers': ['https://9.9.9.9/dns-query']}]
+        task = agent.dispatch('task.preview', {
+            'action': 'network.subscription_rules.change', 'actor': 'preview-operator',
+            'arguments': {'expected_revision': before['revision'],
+                          'direct_rules': before['direct_rules'], 'dns_rules': rules},
+        })
+        self.assertEqual(agent.dispatch('network.subscription_rules.status', {}), before)
+        self.assertNotIn('vps-dns.example', json.dumps(task))
+        agent.dispatch('task.confirm', {'task_id': task['id'], 'actor': 'preview-operator'})
+        after = agent.dispatch('network.subscription_rules.status', {})
+        self.assertEqual(after['direct_rules'], before['direct_rules'])
+        self.assertEqual(after['dns_rules'], rules)
+
     def test_subscription_rules_preview_is_private_in_memory_and_checks_revision(self):
         agent = PreviewAgent()
         before = agent.dispatch('network.subscription_rules.status', {})

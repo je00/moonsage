@@ -102,6 +102,23 @@ class RulesControlTests(unittest.TestCase):
         self.assertEqual(result["direct_count"], 1)
         self.assertNotIn("private.example.com", json.dumps(result))
 
+    def test_mid_path_stays_sensitive_and_roundtrips_without_rewriting_other_rules(self):
+        policy = copy.deepcopy(POLICY)
+        policy["dns_rules"][0]["route"] = "MID"
+        arguments = {**self.arguments, "dns_rules": policy["dns_rules"]}
+        prepared = self.control.prepare_task_action("network.subscription_rules.change", arguments, "admin")
+        self.assertEqual(prepared.sensitive_params["dns_rules"], policy["dns_rules"])
+        self.assertNotIn("private.example.com", json.dumps(dict(prepared.preview)))
+        self.assertNotIn("private.example.com", json.dumps(dict(prepared.params)))
+        result = self.control.execute_task_action("network.subscription_rules.change", {**prepared.params, **prepared.sensitive_params})
+        self.assertEqual(self.runner.state, policy)
+        self.assertEqual(result["dns_count"], 1)
+        self.assertNotIn("private.example.com", json.dumps(result))
+        status = self.runner.subscription_rules_status()
+        runner = ScriptRunner("/test/manager.sh", executor=lambda args, **kwargs:
+                              subprocess.CompletedProcess(args, 0, json.dumps(status), ""))
+        self.assertEqual(runner.subscription_rules_status(), status)
+
     def test_private_policy_is_already_in_encrypted_backup_scope(self):
         self.assertTrue(_is_allowed_source("etc/server-kit/subscription-rules.json"))
 
@@ -176,6 +193,14 @@ class RulesShellTests(unittest.TestCase):
         result = self.run_set({**POLICY, "expected_revision": revision(default_config())})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(self.rules.read_text()), POLICY)
+        self.assertEqual(self.rules.stat().st_mode & 0o777, 0o600)
+
+    def test_mid_dns_path_persists_without_changing_other_policy_fields(self):
+        policy = copy.deepcopy(POLICY)
+        policy["dns_rules"][0]["route"] = "MID"
+        result = self.run_set({**policy, "expected_revision": revision(default_config())})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(self.rules.read_text()), policy)
         self.assertEqual(self.rules.stat().st_mode & 0o777, 0o600)
 
     def test_refresh_failure_restores_exact_previous_rules(self):

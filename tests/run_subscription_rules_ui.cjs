@@ -12,8 +12,9 @@ if (base.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(base.hostn
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "moonsage-rules-ui-"));
 const report = {directory, checks: [], screenshots: [], errors: []};
 const dnsPaths = {
-  PROXY: {label: "通过当前代理出口查询", path: "客户端 → 当前代理出口 → 指定 DNS", help: "随客户端 PROXY 组的选择切换。"},
-  DIRECT: {label: "不走代理，直接查询", path: "客户端 → 指定 DNS（不走代理）", help: "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。"},
+  PROXY: {label: "走出口", path: "设备 → 所选出口 → DNS", help: "跟随客户端 PROXY 选择。", example: "https://8.8.8.8/dns-query"},
+  MID: {label: "走 VPS（MID）", path: "设备 → VPS → DNS", help: "VPS 直出，不走出口节点。", example: "https://1.1.1.1/dns-query"},
+  DIRECT: {label: "本机直连", path: "设备 → DNS", help: "不经过客户端代理。", example: "https://223.5.5.5/dns-query"},
 };
 
 async function checkDNSPath(row, route) {
@@ -23,7 +24,8 @@ async function checkDNSPath(row, route) {
   assert.equal(await row.locator("[data-rule-route-preview]").isVisible(), true);
   assert.equal(await row.locator("[data-rule-route-help]").innerText(), dnsPaths[route].help);
   assert.equal(await row.locator("[data-rule-route-help]").isVisible(), true);
-  assert.deepEqual(await row.locator('[name="dns_route"] option').evaluateAll(options => options.map(option => option.value)), ["PROXY", "DIRECT"]);
+  assert.equal(await row.locator('[name="dns_servers"]').getAttribute("placeholder"), dnsPaths[route].example);
+  assert.deepEqual(await row.locator('[name="dns_route"] option').evaluateAll(options => options.map(option => option.value)), ["PROXY", "MID", "DIRECT"]);
 }
 
 async function check(browser, label, width, theme, user = "preview") {
@@ -56,9 +58,11 @@ async function check(browser, label, width, theme, user = "preview") {
     if (user === "viewer") {
       assert.equal(await region.locator("form").count(), 0);
       assert.match(await region.innerText(), /只读/);
-      assert.equal((await region.innerText()).includes(dnsPaths.DIRECT.label), true);
-      assert.equal((await region.innerText()).includes(dnsPaths.DIRECT.path), true);
-      assert.equal((await region.innerText()).includes(dnsPaths.DIRECT.help), true);
+      for (const route of ["DIRECT", "MID"]) {
+        assert.equal((await region.innerText()).includes(dnsPaths[route].label), true);
+        assert.equal((await region.innerText()).includes(dnsPaths[route].path), true);
+        assert.equal((await region.innerText()).includes(dnsPaths[route].help), true);
+      }
       assert.doesNotMatch(await region.innerText(), /跟随选中出口|直连（显式例外）/);
     } else {
       const form = region.locator("form");
@@ -66,26 +70,33 @@ async function check(browser, label, width, theme, user = "preview") {
       assert.equal((await form.innerText()).includes("只改变 DNS 查询路径，不改变网站流量。"), true);
       const existingDNS = form.locator('[data-rule-row="dns"]').first();
       await checkDNSPath(existingDNS, "DIRECT");
-      assert.equal((await existingDNS.locator(".subscription-rule-route").innerText()).startsWith("DNS 查询怎么走"), true);
+      const existingMID = form.locator('[data-rule-row="dns"]').nth(1);
+      await checkDNSPath(existingMID, "MID");
+      assert.equal((await existingDNS.locator(".subscription-rule-route").innerText()).startsWith("DNS 路径"), true);
       const existingDNSValues = await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value]));
+      const existingMIDValues = await existingMID.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value]));
       const submissions = [];
       page.on("request", request => { if (request.method() === "POST") submissions.push(request.url()); });
       await form.locator('[data-rule-add="direct"]').click();
       await form.locator('[data-rule-row="direct"]').last().locator('[name="direct_value"]').fill("added-office.example");
       await form.locator('[data-rule-add="dns"]').click();
       const dns = form.locator('[data-rule-row="dns"]').last();
+      await checkDNSPath(dns, "PROXY");
+      assert.equal(await dns.locator('[name="dns_servers"]').inputValue(), "");
       await dns.locator('[name="dns_value"]').fill("added-resolver.example");
-      await dns.locator('[name="dns_servers"]').fill("https://8.8.8.8/dns-query");
+      await dns.locator('[name="dns_servers"]').fill("https://9.9.9.9/dns-query");
       await checkDNSPath(dns, "PROXY");
       // Switching the explanatory path is local-only and leaves other rows untouched.
-      await dns.locator('[name="dns_route"]').selectOption("DIRECT");
-      await checkDNSPath(dns, "DIRECT");
-      assert.deepEqual(submissions, []);
-      await checkDNSPath(existingDNS, "DIRECT");
-      assert.deepEqual(await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value])), existingDNSValues);
-      await dns.locator('[name="dns_route"]').selectOption("PROXY");
-      await checkDNSPath(dns, "PROXY");
-      assert.deepEqual(submissions, []);
+      for (const route of ["MID", "DIRECT", "PROXY", "MID"]) {
+        await dns.locator('[name="dns_route"]').selectOption(route);
+        await checkDNSPath(dns, route);
+        assert.equal(await dns.locator('[name="dns_servers"]').inputValue(), "https://9.9.9.9/dns-query");
+        assert.deepEqual(submissions, []);
+        await checkDNSPath(existingDNS, "DIRECT");
+        await checkDNSPath(existingMID, "MID");
+        assert.deepEqual(await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value])), existingDNSValues);
+        assert.deepEqual(await existingMID.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value])), existingMIDValues);
+      }
       assert.equal(await page.locator(".custom-host-create-form").count(), 0);
       await form.locator("[data-rules-save]").click();
       const modal = page.locator("[data-inline-task-modal]");
@@ -93,8 +104,9 @@ async function check(browser, label, width, theme, user = "preview") {
       assert.doesNotMatch(await modal.innerText(), /added-office|added-resolver/);
       await modal.locator("[data-inline-edit]").click();
       assert.equal(await dns.locator('[name="dns_value"]').inputValue(), "added-resolver.example");
-      await checkDNSPath(dns, "PROXY");
+      await checkDNSPath(dns, "MID");
       await checkDNSPath(existingDNS, "DIRECT");
+      await checkDNSPath(existingMID, "MID");
       assert.equal(await form.locator('[data-rule-row="direct"]').last().locator('[name="direct_value"]').inputValue(), "added-office.example");
       await form.locator("[data-rules-save]").click();
       await modal.locator("[data-inline-confirm]").click();
@@ -104,13 +116,14 @@ async function check(browser, label, width, theme, user = "preview") {
       await modal.waitFor({state: "hidden"});
       assert.equal(await region.locator('[name="direct_value"][value="added-office.example"]').count(), 1);
       await checkDNSPath(region.locator('[data-rule-row="dns"]').first(), "DIRECT");
-      await checkDNSPath(region.locator('[data-rule-row="dns"]').last(), "PROXY");
+      await checkDNSPath(region.locator('[data-rule-row="dns"]').nth(1), "MID");
+      await checkDNSPath(region.locator('[data-rule-row="dns"]').last(), "MID");
       assert.equal(await region.locator('[name="dns_value"]').last().inputValue(), "added-resolver.example");
       assert.equal(page.url(), new URL(rulesPath, base).href);
       assert.equal(await region.locator("[data-rules-save]").isDisabled(), true);
-      const proxyFilename = `${label}-${width}-${theme}-${user}-proxy-path.png`;
-      await region.locator('[data-rule-row="dns"]').last().screenshot({path: path.join(directory, proxyFilename)});
-      report.screenshots.push(proxyFilename);
+      const midFilename = `${label}-${width}-${theme}-${user}-mid-path.png`;
+      await region.locator('[data-rule-row="dns"]').last().screenshot({path: path.join(directory, midFilename)});
+      report.screenshots.push(midFilename);
       // Delete all entries in one operation; an empty configuration is intentional.
       while (await region.locator("[data-rule-remove]").count()) await region.locator("[data-rule-remove]").last().click();
       await region.locator("[data-rules-save]").click();

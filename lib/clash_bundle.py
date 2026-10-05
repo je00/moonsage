@@ -480,11 +480,26 @@ def uses_resource_resolver(value: object) -> bool:
     return False
 
 
-def configure_vps_resource_downloads(config: dict, relay_prefix: str = "SERVER.RELAY.VLESS") -> None:
+def configure_vps_resource_downloads(
+    config: dict,
+    relay_prefix: str = "SERVER.RELAY.VLESS",
+    *,
+    subscription_rules: dict | None = None,
+) -> None:
     """资源下载和解析固定经独立 MID 到 VPS，不依赖任何业务出口。"""
 
+    # Only explicitly saved, validated exceptions may share the resource DNS
+    # IP. A template policy merely ending in #MID is not an authorization.
+    approved_mid_policies = {}
+    if subscription_rules is not None:
+        state = normalize_subscription_rules(subscription_rules)
+        approved_mid_policies = {
+            ("+." if item["match"] == "suffix" else "") + item["value"]:
+                [f"{server}#MID" for server in item["servers"]]
+            for item in state["dns_rules"] if item["route"] == "MID"
+        }
     endpoints = resource_endpoints(config)
-    if not endpoints:
+    if not endpoints and not approved_mid_policies:
         return
     proxies = config.get("proxies", [])
     groups = config.get("proxy-groups", [])
@@ -584,7 +599,11 @@ def configure_vps_resource_downloads(config: dict, relay_prefix: str = "SERVER.R
         upstream_updates[key] = CommentedSeq(remaining)
     if (
         any(uses_resource_resolver(dns.get(key, [])) for key in ("fallback", "default-nameserver"))
-        or any(uses_resource_resolver(value) for domain, value in policies.items() if domain not in endpoints)
+        or any(
+            uses_resource_resolver(value)
+            and (value if isinstance(value, list) else [value]) != approved_mid_policies.get(domain)
+            for domain, value in policies.items() if domain not in endpoints
+        )
     ):
         fail("资源 DNS 已被其他自定义策略使用，拒绝覆盖用户配置")
     proxy_nameservers = dns.get("proxy-server-nameserver", list(BOOTSTRAP_DNS_UPSTREAMS))
@@ -657,6 +676,14 @@ def apply_subscription_rules(
         if remove_public_default:
             del dns["nameserver-policy"]["+.byd.auto"]
         return
+
+    if any(item["route"] == "MID" for item in state["dns_rules"]):
+        # Validate the actual independent VPS path even on provider-free
+        # profiles. Work on a copy so a failed validation changes no YAML.
+        try:
+            configure_vps_resource_downloads(copy.deepcopy(config), subscription_rules=state)
+        except SystemExit as error:
+            raise SubscriptionRulesError(str(error)) from None
 
     domains: set[str] = set()
     protected_scopes: list[tuple[str, str]] = []
@@ -1485,6 +1512,15 @@ def main() -> int:
 
     def apply_private_rules(subscription: dict) -> None:
         try:
+            if any(item["route"] == "MID" for item in private_rules["dns_rules"]):
+                # Older skeletons still list 1.1.1.1#PROXY as a general
+                # upstream. Complete the existing guarded resource migration
+                # before validating an explicitly requested MID exception.
+                # Profiles without MID exceptions retain their exact ordering.
+                configure_vps_resource_downloads(
+                    subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")),
+                    subscription_rules=private_rules,
+                )
             apply_subscription_rules(
                 subscription, private_rules,
                 protected_endpoints=[awg_endpoint, relay_address, stable_endpoint, str(vless_template.get("server", ""))],
@@ -1533,7 +1569,10 @@ def main() -> int:
             apply_clean_projection(subscription)
         add_vless_server_relay(subscription, name, selected_exit_ids_for_node)
         apply_private_rules(subscription)
-        configure_vps_resource_downloads(subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")))
+        configure_vps_resource_downloads(
+            subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")),
+            subscription_rules=private_rules,
+        )
         apply_internal_hosts(subscription, host_mappings)
         add_route_exclusion(subscription, awg_network)
         rules = [f"IP-CIDR,{awg_network},DIRECT,no-resolve"]
@@ -1572,7 +1611,10 @@ def main() -> int:
             subscription, name, selected_exit_ids_for_node
         )
         apply_private_rules(subscription)
-        configure_vps_resource_downloads(subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")))
+        configure_vps_resource_downloads(
+            subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")),
+            subscription_rules=private_rules,
+        )
         apply_internal_hosts(subscription, host_mappings)
         apply_vless_proxy_hosts(subscription, host_mappings)
         node = copy.deepcopy(vless_template)

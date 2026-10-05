@@ -67,9 +67,10 @@ class SubscriptionRulesTests(unittest.TestCase):
         for value in bad:
             with self.subTest(server=value), self.assertRaises(SubscriptionRulesError):
                 normalize_config(self.dns(value, "DIRECT"))
-        for value in ("192.168.50.1", "9.9.9.9", "https://192.168.50.1/dns-query"):
-            with self.subTest(server=value), self.assertRaises(SubscriptionRulesError):
-                normalize_config(self.dns(value, "PROXY"))
+        for route in ("PROXY", "MID"):
+            for value in ("192.168.50.1", "9.9.9.9", "https://192.168.50.1/dns-query"):
+                with self.subTest(server=value, route=route), self.assertRaises(SubscriptionRulesError):
+                    normalize_config(self.dns(value, route))
         self.assertEqual(normalize_config(self.dns("192.168.50.1", "DIRECT"))["dns_rules"][0]["servers"], ["192.168.50.1"])
         self.assertEqual(normalize_config(self.dns("https://[2620:FE::FE]/dns-query"))["dns_rules"][0]["servers"], ["https://[2620:fe::fe]/dns-query"])
 
@@ -80,12 +81,32 @@ class SubscriptionRulesTests(unittest.TestCase):
         for address in ("223.5.5.5", "1.12.12.12", "1.1.1.1"):
             with self.subTest(address=address), self.assertRaises(SubscriptionRulesError):
                 normalize_config(self.dns(f"https://{address}/dns-query", "PROXY"))
+        for address in ("8.8.8.8", "1.0.0.1", "223.5.5.5", "1.12.12.12"):
+            with self.subTest(address=address, route="MID"), self.assertRaises(SubscriptionRulesError):
+                normalize_config(self.dns(f"https://{address}/dns-query", "MID"))
+        self.assertEqual(normalize_config(self.dns("https://1.1.1.1/dns-query", "MID")), self.dns("https://1.1.1.1/dns-query", "MID"))
         value = self.dns()
         other = copy.deepcopy(value["dns_rules"][0])
         other.update(value="another.example", route="DIRECT")
         value["dns_rules"].append(other)
         with self.assertRaises(SubscriptionRulesError):
             normalize_config(value)
+
+    def test_mid_persistence_roundtrip_and_path_conflict(self):
+        value = self.dns("https://1.1.1.1/dns-query", "MID")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rules.json"
+            atomic_write(path, value)
+            self.assertEqual(load(path), value)
+            self.assertEqual(overview(path)["revision"], revision(value))
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        for route in ("DIRECT", "PROXY"):
+            value = self.dns("https://9.9.9.9/dns-query", "MID")
+            other = copy.deepcopy(value["dns_rules"][0])
+            other.update(value="another.example", route=route)
+            value["dns_rules"].append(other)
+            with self.subTest(route=route), self.assertRaises(SubscriptionRulesError):
+                normalize_config(value)
 
     def test_limits(self):
         value = self.dns()

@@ -13,13 +13,18 @@
     if (notice) {
       const route = row.querySelector('[name="dns_route"]').value;
       if (notice.dataset.route !== route) {
-        const direct = route === "DIRECT";
+        const paths = {
+          PROXY: ["设备 → 所选出口 → DNS", "跟随客户端 PROXY 选择。"],
+          MID: ["设备 → VPS → DNS", "VPS 直出，不走出口节点。"],
+          DIRECT: ["设备 → DNS", "不经过客户端代理。"],
+        };
         notice.dataset.route = route;
-        notice.querySelector("[data-rule-route-preview]").textContent = direct
-          ? "客户端 → 指定 DNS（不走代理）" : "客户端 → 当前代理出口 → 指定 DNS";
-        notice.querySelector("[data-rule-route-help]").textContent = direct
-          ? "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。" : "随客户端 PROXY 组的选择切换。";
+        notice.querySelector("[data-rule-route-preview]").textContent = paths[route][0];
+        notice.querySelector("[data-rule-route-help]").textContent = paths[route][1];
       }
+      row.querySelector('[name="dns_servers"]').placeholder = route === "MID"
+        ? "https://1.1.1.1/dns-query" : route === "DIRECT"
+          ? "https://223.5.5.5/dns-query" : "https://8.8.8.8/dns-query";
     }
   }
   function refreshForm(form, dirty = true) {

@@ -591,7 +591,7 @@ user = next(
     (
         item for item in users
         if isinstance(item, dict)
-        and not str(item.get("email", "")).startswith("server-kit-vless:")
+        and not str(item.get("email", "")).startswith(("server-kit-vless:", "server-kit-relay-vless:"))
     ),
     None,
 )
@@ -1572,8 +1572,10 @@ verify_clash_vless_relay_bundle() {
   local bundle_dir="$1"
   local relay_config="${2:-${SERVER_RELAY_CONFIG}}"
   local proxy_inputs="${3:-${CLASH_INPUT_CONFIG}}"
+  local subscription_rules="${4:-${SUBSCRIPTION_RULES_PATH:-/etc/server-kit/subscription-rules.json}}"
 
-  python3 - "${relay_config}" "${bundle_dir}" "${proxy_inputs}" "${SCRIPT_DIR}" <<'PYTHON'
+  python3 - "${relay_config}" "${bundle_dir}" "${proxy_inputs}" "${SCRIPT_DIR}" "${subscription_rules}" <<'PYTHON'
+import ipaddress
 import json
 import re
 import sys
@@ -1584,10 +1586,47 @@ from ruamel.yaml import YAML
 sys.path.insert(0, sys.argv[4])
 from lib.clash_bundle import endpoint_rule, normalize_endpoint_address, resource_endpoints, uses_resource_resolver
 from lib.server_kit_proxy_resources import normalized_config, selected_exit_ids
+from lib.server_kit_subscription_rules import SubscriptionRulesError, load as load_subscription_rules, resolver_address
 
 relay_path = Path(sys.argv[1])
 bundle_dir = Path(sys.argv[2])
 catalog_path = Path(sys.argv[3])
+try:
+    private_rules = load_subscription_rules(Path(sys.argv[5]))
+except SubscriptionRulesError:
+    raise SystemExit("无法校验私有 DNS 规则；拒绝替换现有发布内容。") from None
+# Sharing the reserved resource resolver requires a saved MID policy, not
+# merely a #MID suffix supplied by an unrelated template policy.
+approved_mid_policies = {
+    ("+." if item["match"] == "suffix" else "") + item["value"]: item["servers"]
+    for item in private_rules["dns_rules"] if item["route"] == "MID"
+}
+
+
+def has_mid_resolver_route(address, rules):
+    """Require the generated host route and reject an earlier CIDR redirect."""
+    if endpoint_rule(address, "MID") not in rules:
+        return False
+    resolver = ipaddress.ip_address(address)
+    for rule in rules:
+        if not isinstance(rule, str):
+            continue
+        parts = [part.strip() for part in rule.split(",")]
+        if parts[0] in {"MATCH", "FINAL"}:
+            return False
+        if parts[0] not in {"IP-CIDR", "IP-CIDR6"}:
+            continue
+        if len(parts) < 3:
+            return False
+        try:
+            network = ipaddress.ip_network(parts[1], strict=False)
+        except ValueError:
+            return False
+        if resolver in network:
+            return parts[2] == "MID"
+    return False
+
+
 try:
     relay = json.loads(relay_path.read_text(encoding="utf-8")) if relay_path.is_file() else {}
 except (OSError, ValueError) as error:
@@ -1888,11 +1927,38 @@ for path in files:
         for rule in rules if isinstance(rule, str)
         for parts in [[part.strip() for part in rule.split(",")]]
     )
+    # The legacy Stash projection intentionally retains only the first server.
+    # Modern profiles must match the complete, ordered saved server list.
+    approved_mid_values = {
+        domain: [f"{server}#MID" for server in servers] if modern_dns else servers[:1]
+        for domain, servers in approved_mid_policies.items()
+    }
+    has_private_mid_projection = not approved_mid_values or (
+        isinstance(policies, dict)
+        and all(
+            domain in policies
+            and isinstance(policies[domain], list if modern_dns else str)
+            and (policies[domain] if isinstance(policies[domain], list) else [policies[domain]]) == values
+            for domain, values in approved_mid_values.items()
+        )
+        and dns.get("follow-rule") is True
+        and (not modern_dns or dns.get("respect-rules") is True)
+        and all(
+            has_mid_resolver_route(resolver_address(server), rules)
+            for servers in approved_mid_policies.values()
+            for server in (servers if modern_dns else servers[:1])
+        )
+    )
     has_resource_isolation = (
         not any(uses_resource_resolver(dns.get(key, [])) for key in (
             "nameserver", "direct-nameserver", "fallback", "default-nameserver",
         ))
-        and not any(uses_resource_resolver(value) for domain, value in policies.items() if domain not in bootstrap_domains)
+        and not any(
+            uses_resource_resolver(value)
+            and (value if isinstance(value, list) else [value]) != approved_mid_values.get(domain)
+            for domain, value in policies.items()
+            if domain not in bootstrap_domains
+        )
     )
     proxy_policies = dns.get("proxy-server-nameserver-policy", {})
     has_entry_policy = isinstance(proxy_policies, dict) and all(
@@ -1925,6 +1991,7 @@ for path in files:
     if (
         not has_relay_source
         or not has_mid_source
+        or not has_private_mid_projection
         or not has_resource_routes
         or not has_resource_isolation
         or not has_entry_policy
