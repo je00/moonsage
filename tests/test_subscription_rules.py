@@ -43,7 +43,7 @@ class SubscriptionRulesTests(unittest.TestCase):
         for value in values:
             with self.subTest(value=value), self.assertRaises(SubscriptionRulesError):
                 normalize_config(self.dns(value=value))
-        for cidr in ("0.0.0.0/0", "0.0.0.0/1", "::/0", "2000::/3", "192.168.1.1/24", "192.168.1.1", "::ffff:0:0/96"):
+        for cidr in ("0.0.0.0/0", "0.0.0.0/1", "::/0", "2000::/3", "192.168.1.1/24", "::ffff:0:0/96"):
             with self.subTest(cidr=cidr), self.assertRaises(SubscriptionRulesError):
                 normalize_config({"direct_rules": [{"match": "cidr", "value": cidr}]})
         for value in ([], {"version": True}, {"unexpected": []}, {"dns_rules": {}}, {"direct_rules": ["example"]}):
@@ -55,6 +55,36 @@ class SubscriptionRulesTests(unittest.TestCase):
             normalize_config(value)
         with self.assertRaises(SubscriptionRulesError):
             normalize_config(self.dns(match="exact", value="*.example.com"))
+
+    def test_single_ip_is_a_canonical_host_cidr_and_keeps_durable_format(self):
+        value = {"version": 1, "direct_rules": [
+            {"match": "cidr", "value": " 192.168.50.12 "},
+            {"match": "cidr", "value": "2001:DB8:50:0::12"},
+            {"match": "cidr", "value": "192.168.51.0/24"},
+        ], "dns_rules": []}
+        expected = copy.deepcopy(value)
+        expected["direct_rules"][0]["value"] = "192.168.50.12/32"
+        expected["direct_rules"][1]["value"] = "2001:db8:50::12/128"
+        self.assertEqual(normalize_config(value), expected)
+        self.assertEqual(normalize_config(expected), expected)
+        self.assertEqual(revision(value), revision(expected))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rules.json"
+            atomic_write(path, value)
+            self.assertEqual(load(path), expected)
+            self.assertEqual(json.loads(path.read_text()), expected)
+        for address in ("192.168.50.12/32", "2001:db8:50::12/128"):
+            duplicated = copy.deepcopy(value)
+            duplicated["direct_rules"].append({"match": "cidr", "value": address})
+            with self.subTest(address=address), self.assertRaises(SubscriptionRulesError):
+                normalize_config(duplicated)
+
+    def test_single_ip_input_rejects_names_invalid_addresses_zones_and_mapped(self):
+        for value in ("host.example", "192.168.50.999", "192.168.050.12", "192.168.50.12:53",
+                      "192.168.50.12/24", "2001:db8::12/64", "[2001:db8::12]", "fe80::12%eth0",
+                      "fe80::12%eth0/128", "::ffff:192.168.50.12", "::ffff:c0a8:320c/128", "", None):
+            with self.subTest(value=value), self.assertRaises(SubscriptionRulesError):
+                normalize_config({"direct_rules": [{"match": "cidr", "value": value}]})
 
     def test_dns_addresses_are_bounded_and_bootstrap_independent(self):
         bad = [

@@ -3,12 +3,33 @@
 // Draft rules exist only in this page. Persistent facts are saved by root tasks.
 (() => {
   const initialized = new WeakSet();
+  const drafts = new WeakMap();
   function refreshRow(row) {
     const kind = row.dataset.ruleRow;
     const match = row.querySelector(`[name="${kind}_match"]`).value;
     const input = row.querySelector(`[name="${kind}_value"]`);
-    input.placeholder = match === "cidr" ? "192.168.50.0/24" : "example.com";
-    row.querySelector("[data-rule-value-label]").textContent = match === "cidr" ? "IP 网段" : "域名";
+    const ip = match === "cidr";
+    let draft = drafts.get(row);
+    if (!draft) {
+      draft = {domain: {value: "", match: "suffix"}, cidr: {value: ""}};
+      drafts.set(row, draft);
+    }
+    draft[ip ? "cidr" : "domain"] = {value: input.value, match};
+    row.querySelector("[data-rule-match-fallback]").hidden = true;
+    const picker = row.querySelector("[data-rule-type-picker]");
+    if (picker) picker.hidden = false;
+    row.querySelectorAll("[data-rule-type]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.ruleType === (ip ? "cidr" : "domain")));
+    });
+    row.querySelector("[data-rule-subdomains]").hidden = ip;
+    const subdomains = row.querySelector("[data-rule-subdomains-toggle]");
+    subdomains.checked = match === "suffix";
+    subdomains.disabled = ip;
+    input.placeholder = ip ? "192.168.50.10" : "example.com";
+    row.querySelector("[data-rule-value-label]").textContent = ip ? "IP / 网段" : "域名";
+    row.querySelector("[data-rule-value-help]").textContent = ip
+      ? "网段示例：192.168.50.0/24"
+      : match === "exact" ? "只匹配填写的域名。" : "同时匹配此域名及其子域名。";
     const notice = row.querySelector("[data-rule-route-notice]");
     if (notice) {
       const route = row.querySelector('[name="dns_route"]').value;
@@ -58,6 +79,21 @@
     });
   }
   document.addEventListener("click", event => {
+    const type = event.target.closest("[data-rule-type]");
+    if (type) {
+      const row = type.closest("[data-rule-row]");
+      const form = row?.closest("[data-rules-form]");
+      if (!form || type.disabled || form.getAttribute("aria-busy") === "true") return;
+      if (type.getAttribute("aria-pressed") === "true") return;
+      refreshRow(row);
+      const kind = row.dataset.ruleRow;
+      const target = drafts.get(row)[type.dataset.ruleType];
+      row.querySelector(`[name="${kind}_match"]`).value = type.dataset.ruleType === "cidr" ? "cidr" : target.match;
+      row.querySelector(`[name="${kind}_value"]`).value = target.value;
+      refreshRow(row);
+      form.dispatchEvent(new Event("input", {bubbles: true}));
+      return;
+    }
     const add = event.target.closest("[data-rule-add]");
     const remove = event.target.closest("[data-rule-remove]");
     const button = add || remove;
@@ -73,7 +109,7 @@
       row.querySelector("[data-rule-remove]").hidden = false;
       list.append(row);
       refreshRow(row);
-      row.querySelector("input").focus();
+      row.querySelector(`[name="${kind}_value"]`).focus();
     } else {
       const kind = remove.closest("[data-rule-row]").dataset.ruleRow;
       remove.closest("[data-rule-row]").remove();
@@ -86,7 +122,12 @@
     const form = event.target.closest("[data-rules-form]");
     if (!form || form.getAttribute("aria-busy") === "true") return;
     const row = event.target.closest("[data-rule-row]");
-    if (row) refreshRow(row);
+    if (row) {
+      if (event.target.matches("[data-rule-subdomains-toggle]")) {
+        row.querySelector(`[name="${row.dataset.ruleRow}_match"]`).value = event.target.checked ? "suffix" : "exact";
+      }
+      refreshRow(row);
+    }
     refreshForm(form);
   });
   document.addEventListener("server-kit:content-updated", initialize);

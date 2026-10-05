@@ -126,16 +126,17 @@ def normalize_config(value: object) -> dict:
                 raise SubscriptionRulesError("规则匹配方式无效。")
             if match == "cidr":
                 try:
-                    if not isinstance(item["value"], str) or "/" not in item["value"]:
+                    if not isinstance(item["value"], str):
                         raise ValueError()
                     network = ipaddress.ip_network(item["value"].strip(), strict=True)
                     if network.prefixlen < (8 if network.version == 4 else 32):
                         raise ValueError()
-                    if getattr(network.network_address, "ipv4_mapped", None):
+                    if (getattr(network.network_address, "ipv4_mapped", None)
+                            or getattr(network.network_address, "scope_id", None)):
                         raise ValueError()
                     normalized = str(network)
                 except ValueError:
-                    raise SubscriptionRulesError("请填写网络地址 CIDR，IPv4 范围不大于 /8，IPv6 不大于 /32。") from None
+                    raise SubscriptionRulesError("请填写 IP 或规范网段 CIDR，IPv4 范围不大于 /8，IPv6 不大于 /32。") from None
             else:
                 normalized = normalize_domain(item["value"], match)
             if (match, normalized) in seen:

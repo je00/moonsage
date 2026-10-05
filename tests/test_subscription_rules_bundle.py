@@ -254,6 +254,9 @@ class SubscriptionRulesBundleTests(unittest.TestCase):
             ("direct_rules", "cidr", "10.0.0.0/8"),
             ("direct_rules", "cidr", "8.8.8.0/24"),
             ("direct_rules", "cidr", "1.1.1.0/24"),
+            ("direct_rules", "cidr", "10.20.0.2"),
+            ("direct_rules", "cidr", "8.8.8.8"),
+            ("direct_rules", "cidr", "1.1.1.1"),
         ):
             with self.subTest(kind=kind, value=value):
                 config = self.profile()
@@ -263,6 +266,20 @@ class SubscriptionRulesBundleTests(unittest.TestCase):
                 with self.assertRaises(SubscriptionRulesError):
                     self.apply(config, state)
                 self.assertEqual(config, before)
+
+    def test_single_ip_direct_rules_keep_entry_protection_and_host_only_routes(self):
+        for address in ("203.0.113.12", "2001:db8:50::12"):
+            with self.subTest(address=address):
+                config = self.profile()
+                state = {"version": 1, "direct_rules": [{"match": "cidr", "value": address}], "dns_rules": []}
+                before = copy.deepcopy(config)
+                with self.assertRaises(SubscriptionRulesError):
+                    self.apply(config, state, protected_endpoints=[address])
+                self.assertEqual(config, before)
+                self.apply(config, state)
+                family, prefix = ("IP-CIDR6", 128) if ":" in address else ("IP-CIDR", 32)
+                self.assertIn(f"{family},{address}/{prefix},DIRECT,no-resolve", config["rules"])
+                self.assertEqual(config["dns"], before["dns"])
 
     def test_hosts_wildcards_and_airport_bootstrap_are_protected(self):
         for domain in ("nas.internal.example", "airport.example.org"):

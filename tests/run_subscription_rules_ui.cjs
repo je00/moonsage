@@ -28,6 +28,36 @@ async function checkDNSPath(row, route) {
   assert.deepEqual(await row.locator('[name="dns_route"] option').evaluateAll(options => options.map(option => option.value)), ["PROXY", "MID", "DIRECT"]);
 }
 
+async function checkRuleTarget(row, kind, match) {
+  const isIP = match === "cidr";
+  assert.equal(await row.locator(`[name="${kind}_match"]`).inputValue(), match);
+  assert.equal(await row.locator("[data-rule-match-fallback]").isVisible(), false);
+  assert.equal(await row.locator("[data-rule-value-label]").innerText(), isIP ? "IP / 网段" : "域名");
+  assert.equal(await row.locator("[data-rule-value-help]").innerText(), isIP
+    ? "网段示例：192.168.50.0/24"
+    : match === "suffix" ? "同时匹配此域名及其子域名。" : "只匹配填写的域名。");
+  const toggle = row.locator("[data-rule-subdomains-toggle]");
+  assert.equal(await toggle.getAttribute("name"), null);
+  assert.equal(await toggle.isVisible(), !isIP);
+  assert.equal(await toggle.isDisabled(), isIP);
+  assert.equal(await toggle.isChecked(), match === "suffix");
+  assert.equal(await row.locator("[data-rule-type]").count(), kind === "direct" ? 2 : 0);
+  if (kind === "direct") {
+    for (const type of ["domain", "cidr"]) {
+      const button = row.locator(`[data-rule-type="${type}"]`);
+      assert.equal(await button.isVisible(), true);
+      assert.equal(await button.getAttribute("type"), "button");
+      assert.equal(await button.getAttribute("aria-pressed"), String(isIP === (type === "cidr")));
+      assert.equal(await button.innerText(), type === "domain" ? "域名" : "IP / 网段");
+    }
+  }
+}
+
+async function ruleValues(row) {
+  return row.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node =>
+    [node.name, node.value, node.type === "checkbox" ? node.checked : null]));
+}
+
 async function check(browser, label, width, theme, user = "preview") {
   const context = await browser.newContext({viewport: {width, height: width < 768 ? 844 : 1100},
     ...(width < 768 ? {isMobile: true, hasTouch: true} : {})});
@@ -70,21 +100,58 @@ async function check(browser, label, width, theme, user = "preview") {
       assert.equal((await form.innerText()).includes("只改变 DNS 查询路径，不改变网站流量。"), true);
       const existingDNS = form.locator('[data-rule-row="dns"]').first();
       await checkDNSPath(existingDNS, "DIRECT");
+      await checkRuleTarget(existingDNS, "dns", "suffix");
       const existingMID = form.locator('[data-rule-row="dns"]').nth(1);
       await checkDNSPath(existingMID, "MID");
+      await checkRuleTarget(existingMID, "dns", "exact");
+      const existingDomain = form.locator('[data-rule-row="direct"]').first();
+      const existingIP = form.locator('[data-rule-row="direct"]').nth(1);
+      await checkRuleTarget(existingDomain, "direct", "suffix");
+      await checkRuleTarget(existingIP, "direct", "cidr");
       assert.equal((await existingDNS.locator(".subscription-rule-route").innerText()).startsWith("DNS 路径"), true);
-      const existingDNSValues = await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value]));
-      const existingMIDValues = await existingMID.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value]));
+      const existingDNSValues = await ruleValues(existingDNS);
+      const existingMIDValues = await ruleValues(existingMID);
+      const existingDomainValues = await ruleValues(existingDomain);
+      const existingIPValues = await ruleValues(existingIP);
       const submissions = [];
       page.on("request", request => { if (request.method() === "POST") submissions.push(request.url()); });
       await form.locator('[data-rule-add="direct"]').click();
-      await form.locator('[data-rule-row="direct"]').last().locator('[name="direct_value"]').fill("added-office.example");
+      const direct = form.locator('[data-rule-row="direct"]').nth(2);
+      await checkRuleTarget(direct, "direct", "suffix");
+      await direct.locator('[name="direct_value"]').fill("added-office.example");
+      // Native keyboard semantics and independent domain/IP drafts.
+      await direct.locator("[data-rule-subdomains-toggle]").focus();
+      await page.keyboard.press("Space");
+      await checkRuleTarget(direct, "direct", "exact");
+      await direct.locator('[data-rule-type="cidr"]').focus();
+      await page.keyboard.press("Space");
+      await checkRuleTarget(direct, "direct", "cidr");
+      assert.equal(await direct.locator('[name="direct_value"]').inputValue(), "");
+      await direct.locator('[name="direct_value"]').fill("192.168.60.10");
+      await direct.locator('[data-rule-type="domain"]').focus();
+      await page.keyboard.press("Enter");
+      await checkRuleTarget(direct, "direct", "exact");
+      assert.equal(await direct.locator('[name="direct_value"]').inputValue(), "added-office.example");
+      await direct.locator('[data-rule-type="cidr"]').click();
+      await checkRuleTarget(direct, "direct", "cidr");
+      assert.equal(await direct.locator('[name="direct_value"]').inputValue(), "192.168.60.10");
+      await direct.locator('[data-rule-type="domain"]').click();
+      await checkRuleTarget(direct, "direct", "exact");
+      await form.locator('[data-rule-add="direct"]').click();
+      const singleIP = form.locator('[data-rule-row="direct"]').nth(3);
+      await singleIP.locator('[data-rule-type="cidr"]').click();
+      await singleIP.locator('[name="direct_value"]').fill("192.168.60.11");
+      await checkRuleTarget(singleIP, "direct", "cidr");
       await form.locator('[data-rule-add="dns"]').click();
       const dns = form.locator('[data-rule-row="dns"]').last();
       await checkDNSPath(dns, "PROXY");
+      await checkRuleTarget(dns, "dns", "suffix");
       assert.equal(await dns.locator('[name="dns_servers"]').inputValue(), "");
       await dns.locator('[name="dns_value"]').fill("added-resolver.example");
       await dns.locator('[name="dns_servers"]').fill("https://9.9.9.9/dns-query");
+      await dns.locator("[data-rule-subdomains-toggle]").focus();
+      await page.keyboard.press("Space");
+      await checkRuleTarget(dns, "dns", "exact");
       await checkDNSPath(dns, "PROXY");
       // Switching the explanatory path is local-only and leaves other rows untouched.
       for (const route of ["MID", "DIRECT", "PROXY", "MID"]) {
@@ -94,8 +161,10 @@ async function check(browser, label, width, theme, user = "preview") {
         assert.deepEqual(submissions, []);
         await checkDNSPath(existingDNS, "DIRECT");
         await checkDNSPath(existingMID, "MID");
-        assert.deepEqual(await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value])), existingDNSValues);
-        assert.deepEqual(await existingMID.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value])), existingMIDValues);
+        assert.deepEqual(await ruleValues(existingDNS), existingDNSValues);
+        assert.deepEqual(await ruleValues(existingMID), existingMIDValues);
+        assert.deepEqual(await ruleValues(existingDomain), existingDomainValues);
+        assert.deepEqual(await ruleValues(existingIP), existingIPValues);
       }
       assert.equal(await page.locator(".custom-host-create-form").count(), 0);
       await form.locator("[data-rules-save]").click();
@@ -107,7 +176,15 @@ async function check(browser, label, width, theme, user = "preview") {
       await checkDNSPath(dns, "MID");
       await checkDNSPath(existingDNS, "DIRECT");
       await checkDNSPath(existingMID, "MID");
-      assert.equal(await form.locator('[data-rule-row="direct"]').last().locator('[name="direct_value"]').inputValue(), "added-office.example");
+      await checkRuleTarget(dns, "dns", "exact");
+      await checkRuleTarget(direct, "direct", "exact");
+      assert.equal(await direct.locator('[name="direct_value"]').inputValue(), "added-office.example");
+      await direct.locator('[data-rule-type="cidr"]').click();
+      assert.equal(await direct.locator('[name="direct_value"]').inputValue(), "192.168.60.10");
+      await direct.locator('[data-rule-type="domain"]').click();
+      await checkRuleTarget(direct, "direct", "exact");
+      await checkRuleTarget(singleIP, "direct", "cidr");
+      assert.equal(await singleIP.locator('[name="direct_value"]').inputValue(), "192.168.60.11");
       await form.locator("[data-rules-save]").click();
       await modal.locator("[data-inline-confirm]").click();
       await modal.locator("[data-inline-done]").waitFor({state: "visible"});
@@ -115,15 +192,24 @@ async function check(browser, label, width, theme, user = "preview") {
       await modal.locator("[data-inline-done]").click();
       await modal.waitFor({state: "hidden"});
       assert.equal(await region.locator('[name="direct_value"][value="added-office.example"]').count(), 1);
+      await checkRuleTarget(region.locator('[data-rule-row="direct"]').nth(2), "direct", "exact");
+      await checkRuleTarget(region.locator('[data-rule-row="direct"]').nth(3), "direct", "cidr");
+      assert.equal(await region.locator('[data-rule-row="direct"]').nth(3).locator('[name="direct_value"]').inputValue(), "192.168.60.11/32");
       await checkDNSPath(region.locator('[data-rule-row="dns"]').first(), "DIRECT");
       await checkDNSPath(region.locator('[data-rule-row="dns"]').nth(1), "MID");
       await checkDNSPath(region.locator('[data-rule-row="dns"]').last(), "MID");
       assert.equal(await region.locator('[name="dns_value"]').last().inputValue(), "added-resolver.example");
+      await checkRuleTarget(region.locator('[data-rule-row="dns"]').last(), "dns", "exact");
       assert.equal(page.url(), new URL(rulesPath, base).href);
       assert.equal(await region.locator("[data-rules-save]").isDisabled(), true);
       const midFilename = `${label}-${width}-${theme}-${user}-mid-path.png`;
       await region.locator('[data-rule-row="dns"]').last().screenshot({path: path.join(directory, midFilename)});
       report.screenshots.push(midFilename);
+      for (const [index, type] of [[2, "domain"], [3, "ip"]]) {
+        const targetFilename = `${label}-${width}-${theme}-${user}-${type}-target.png`;
+        await region.locator('[data-rule-row="direct"]').nth(index).screenshot({path: path.join(directory, targetFilename)});
+        report.screenshots.push(targetFilename);
+      }
       // Delete all entries in one operation; an empty configuration is intentional.
       while (await region.locator("[data-rule-remove]").count()) await region.locator("[data-rule-remove]").last().click();
       await region.locator("[data-rules-save]").click();
@@ -164,7 +250,55 @@ async function check(browser, label, width, theme, user = "preview") {
       report.screenshots.push(menuFilename);
       await menu.locator("[data-mobile-menu-close]").click();
     }
-    report.checks.push(`${label} ${width} ${theme} ${user}: dedicated-page navigation, no overflow, explicit DNS paths, local route preview, stable route values, batch save/delete, cancel preserves drafts, save stays on page`);
+    report.checks.push(`${label} ${width} ${theme} ${user}: domain/IP controls, checkbox semantics, keyboard activation, independent type drafts, single-IP normalization, no overflow, DNS paths, local preview, batch save/delete, cancel preserves drafts, save stays on page`);
+  } finally { await context.close(); }
+}
+
+async function checkNoJavaScript(browser, label) {
+  const context = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
+  await context.route("**/*", route => new URL(route.request().url()).origin === base.origin
+    ? route.continue() : route.abort());
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  try {
+    await page.goto(new URL("login/", base).href);
+    await page.locator('[name="username"]').fill("preview");
+    await page.locator('[name="password"]').fill("Preview-only-2026!");
+    await Promise.all([page.waitForURL("**/overview/"), page.locator('button[type="submit"]').click()]);
+    assert.equal((await context.request.get(new URL("__preview__/scenario/rich/", base).href)).status(), 200);
+    await page.goto(new URL("network/subscription-rules/", base).href);
+    const form = page.locator("[data-rules-form]");
+    const direct = form.locator('[data-rule-row="direct"]').first();
+    const dns = form.locator('[data-rule-row="dns"]').first();
+    for (const row of [direct, dns]) {
+      assert.equal(await row.locator("[data-rule-match-fallback]").isVisible(), true);
+      assert.equal(await row.locator("[data-rule-subdomains-toggle]").isVisible(), false);
+    }
+    for (const button of await direct.locator("[data-rule-type]").all()) assert.equal(await button.isVisible(), false);
+    assert.equal(await form.locator('[data-rule-add="direct"]').isVisible(), false);
+    assert.deepEqual(await dns.locator('[name="dns_match"] option').evaluateAll(options => options.map(option => option.value)), ["suffix", "exact"]);
+    await direct.locator('[name="direct_match"]').selectOption("cidr");
+    await direct.locator('[name="direct_value"]').fill("192.168.60.12");
+    await Promise.all([
+      page.waitForURL("**/network/subscription-rules/preview/"),
+      form.locator("[data-rules-save]").click(),
+    ]);
+    assert.equal(await page.locator("h1").innerText(), "更新指定直连与 DNS");
+    await Promise.all([
+      page.waitForURL(/\/tasks\/task-[^/]+\/$/),
+      page.getByRole("button", {name: "确认保存", exact: true}).click(),
+    ]);
+    await page.goto(new URL("network/subscription-rules/", base).href);
+    const saved = page.locator('[data-rule-row="direct"]').first();
+    assert.equal(await saved.locator('[name="direct_match"]').inputValue(), "cidr");
+    assert.equal(await saved.locator('[name="direct_value"]').inputValue(), "192.168.60.12/32");
+    assert.equal(await saved.locator("[data-rule-match-fallback]").isVisible(), true);
+    assert.equal(await page.locator('[data-rule-row="dns"]').first().locator('[name="dns_match"]').inputValue(), "suffix");
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    const filename = `${label}-390-no-javascript.png`;
+    await saved.screenshot({path: path.join(directory, filename)});
+    report.screenshots.push(filename);
+    report.checks.push(`${label} no JavaScript: visible named fallback controls, enhanced controls hidden, existing rule preview/save, single IP normalized, no overflow`);
   } finally { await context.close(); }
 }
 
@@ -176,6 +310,7 @@ async function check(browser, label, width, theme, user = "preview") {
       await check(browser, label, 390, "light");
       await check(browser, label, 320, "dark");
       await check(browser, label, 390, "dark", "viewer");
+      await checkNoJavaScript(browser, label);
     } finally { await browser.close(); }
   }
   assert.deepEqual(report.errors, []);

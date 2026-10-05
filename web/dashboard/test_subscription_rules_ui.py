@@ -2,11 +2,13 @@
 
 import copy
 import json
+from html.parser import HTMLParser
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.test import Client, SimpleTestCase, TestCase
+from django.template.loader import render_to_string
 from django.urls import reverse
 
 from control_plane.client import AgentError
@@ -27,6 +29,16 @@ TASK = {
     "state": "waiting_confirmation", "state_label": "待确认", "terminal": False,
     "preview": {"title": "保存订阅规则", "summary": "统一确认", "facts": {"直连规则": 2}},
 }
+
+
+class ElementAttributes(HTMLParser):
+    def __init__(self, source):
+        super().__init__()
+        self.elements = []
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
 
 
 class SubscriptionRulesUITests(TestCase):
@@ -79,6 +91,37 @@ class SubscriptionRulesUITests(TestCase):
         self.endpoint_transaction.assert_not_called()
         self.duckdns.assert_not_called()
         self.assertIn("no-store", response["Cache-Control"])
+
+    def test_rule_type_controls_keep_wire_contract_and_no_javascript_fallback(self):
+        for kind, matches in (("direct", ("suffix", "exact", "cidr")), ("dns", ("suffix", "exact"))):
+            for match in matches:
+                with self.subTest(kind=kind, match=match):
+                    html = render_to_string("dashboard/_subscription_rule_row.html", {
+                        "kind": kind, "rule": {"match": match, "value": "192.168.50.0/24" if match == "cidr" else "example.com",
+                                              "route": "PROXY", "servers": ["https://8.8.8.8/dns-query"]},
+                    })
+                    elements = ElementAttributes(html).elements
+                    fallback = next(attrs for _, attrs in elements if "data-rule-match-fallback" in attrs)
+                    self.assertNotIn("hidden", fallback)
+                    select = next(attrs for tag, attrs in elements if tag == "select" and attrs.get("name") == kind + "_match")
+                    self.assertNotIn("disabled", select)
+                    selected = [attrs["value"] for tag, attrs in elements if tag == "option" and "selected" in attrs]
+                    self.assertIn(match, selected)
+                    controls = [attrs for tag, attrs in elements if "data-rule-type" in attrs]
+                    self.assertEqual([attrs["data-rule-type"] for attrs in controls], ["domain", "cidr"] if kind == "direct" else [])
+                    for control in controls:
+                        self.assertEqual(control["type"], "button")
+                        self.assertEqual(control["aria-pressed"], str((match == "cidr") == (control["data-rule-type"] == "cidr")).lower())
+                    toggle = next(attrs for tag, attrs in elements if "data-rule-subdomains-toggle" in attrs)
+                    self.assertEqual(toggle["type"], "checkbox")
+                    self.assertNotIn("name", toggle, "UI-only toggle must not add another wire value")
+                    self.assertEqual("checked" in toggle, match == "suffix")
+                    self.assertEqual("disabled" in toggle, match == "cidr")
+                    self.assertIn("包含子域名", html)
+                    help_text = ("网段示例：192.168.50.0/24" if match == "cidr" else
+                                 "同时匹配此域名及其子域名。" if match == "suffix" else "只匹配填写的域名。")
+                    self.assertIn(help_text, html)
+                    self.assertIn("data-rule-value-help", html)
 
     def test_domains_page_links_to_rules_without_loading_or_rendering_editor(self):
         self.status.side_effect = AgentError("rules backend unavailable")
@@ -201,6 +244,21 @@ class SubscriptionRulesUITests(TestCase):
         self.assertEqual(response.context["active_page"], "subscription-rules")
         self.assertContains(response, 'href="' + self.url + '"')
         self.assertNotContains(response, 'href="' + self.domains_url + '#subscription-rules"')
+        self.confirm.assert_not_called()
+
+    def test_direct_single_ip_input_normalizes_to_host_cidr(self):
+        for address, expected in (("192.168.50.10", "192.168.50.10/32"),
+                                  ("2001:db8::10", "2001:db8::10/128")):
+            with self.subTest(address=address):
+                self.preview.reset_mock()
+                response = self.client.post(self.preview_url, self.data(
+                    direct_match=["exact", "cidr"], direct_value=["DIRECT.Example.com.", address],
+                ))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.preview.call_args.args[0], [
+                    {"match": "exact", "value": "direct.example.com"},
+                    {"match": "cidr", "value": expected},
+                ])
         self.confirm.assert_not_called()
 
     def test_empty_lists_are_explicit_clear_not_missing_form(self):
