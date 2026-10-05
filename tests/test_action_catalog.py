@@ -49,6 +49,8 @@ EXPECTED_PROTOCOL_ACTIONS = frozenset({
     "network.subscription.rotate",
     "network.subscription.state",
     "network.subscriptions.sync",
+    "network.subscription_rules.status",
+    "network.subscription_rules.change",
     "security.transaction",
     "security.transaction.change",
     "service.change",
@@ -67,6 +69,7 @@ EXPECTED_PROTOCOL_ACTIONS = frozenset({
 })
 
 EXPECTED_CHANGE_ACTIONS = frozenset({
+    "network.subscription_rules.change",
     "network.permission.batch",
     "backup.create",
     "backup.delete",

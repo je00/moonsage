@@ -28,6 +28,8 @@ VLESS_ACCESS_HELPER="${VLESS_ACCESS_HELPER:-${SCRIPT_DIR}/lib/vless_access.py}"
 FILE_MANAGER="${FILE_MANAGER:-${SCRIPT_DIR}/debian_file_manager.sh}"
 BACKUP_HELPER="${BACKUP_HELPER:-${SCRIPT_DIR}/lib/server_kit_backup.py}"
 NODE_DOMAIN_HELPER="${NODE_DOMAIN_HELPER:-${SCRIPT_DIR}/lib/server_kit_node_domains.py}"
+SUBSCRIPTION_RULES_HELPER="${SUBSCRIPTION_RULES_HELPER:-${SCRIPT_DIR}/lib/server_kit_subscription_rules.py}"
+SUBSCRIPTION_RULES_PATH="${SUBSCRIPTION_RULES_PATH:-/etc/server-kit/subscription-rules.json}"
 PUBLIC_ENDPOINT_HELPER="${PUBLIC_ENDPOINT_HELPER:-${SCRIPT_DIR}/lib/server_kit_public_endpoint.py}"
 PUBLICATION_STATE_HELPER="${PUBLICATION_STATE_HELPER:-${SCRIPT_DIR}/lib/server_kit_publication_state.py}"
 PUBLIC_ENDPOINT_TRANSACTION_HELPER="${PUBLIC_ENDPOINT_TRANSACTION_HELPER:-${SCRIPT_DIR}/lib/server_kit_public_endpoint_transaction.py}"
@@ -2385,6 +2387,149 @@ print()
 PYTHON
 }
 
+show_subscription_rules_json() {
+  python3 "${SUBSCRIPTION_RULES_HELPER}" overview --config "${SUBSCRIPTION_RULES_PATH}"
+}
+
+set_subscription_rules_json() {
+  [[ "${SERVER_KIT_NETWORK_WRITES:-0}" == "1" ]] || { fail "订阅规则写操作未启用。"; return 1; }
+  [[ -r "${CLASH_CONFIG}" ]] || { fail "Clash 订阅服务尚未安装。"; return 1; }
+  # stdin is deliberately used: private domains/resolvers must not enter argv,
+  # audit text or shell tracing. The caller owns management-change.lock.
+  python3 -c '
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, sys.argv[1])
+from lib.server_kit_subscription_rules import atomic_write, load, normalize_config
+
+path, manager = Path(sys.argv[2]), sys.argv[3]
+try:
+    raw = sys.stdin.buffer.read(300001)
+    if len(raw) > 300000:
+        raise ValueError("size")
+    incoming = json.loads(raw)
+    if not isinstance(incoming, dict):
+        raise ValueError("shape")
+    expected = incoming.pop("expected_revision", None)
+    if expected is not None and (not isinstance(expected, str) or re.fullmatch(r"[0-9a-f]{64}", expected) is None):
+        raise ValueError("revision")
+    desired = normalize_config(incoming)
+    current = load(path)
+    digest = hashlib.sha256(json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    if expected is not None and expected != digest:
+        print("SERVER_KIT_DIAGNOSTIC:subscription_rules_changed", file=sys.stderr)
+        raise SystemExit(1)
+    if path.is_symlink():
+        raise ValueError("symlink")
+except (ValueError, OSError):
+    print("订阅规则校验失败，原规则和服务未更改。", file=sys.stderr)
+    raise SystemExit(1)
+
+path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+work = Path(tempfile.mkdtemp(prefix=".subscription-rules-", dir=path.parent))
+keep_recovery = False
+
+class RefreshInterrupted(Exception):
+    pass
+
+def interrupted(signum, frame):
+    raise RefreshInterrupted()
+
+def group_alive(identifier):
+    try:
+        os.killpg(identifier, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+def terminate_group(child):
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        child.poll()
+        if not group_alive(child.pid):
+            return True
+        time.sleep(0.05)
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    child.wait(timeout=5)
+    return False
+
+try:
+    candidate = work / "candidate.json"
+    atomic_write(candidate, desired)
+    # Canonical state stays untouched throughout generation and validation.
+    # The publisher commits rules + HTTP config + payload in one rollback scope.
+    env = {**os.environ, "SUBSCRIPTION_RULES_PATH": str(candidate), "RULES_CONTROLLER_PID": str(os.getpid())}
+    try:
+        os.fstat(9)
+        inherited_locks = (9,)
+    except OSError:
+        inherited_locks = ()
+    child = None
+    aborted = False
+    try:
+        refresh_timeout = max(0.1, min(120.0, float(os.environ.get("SERVER_KIT_RULES_REFRESH_TIMEOUT", "120"))))
+    except ValueError:
+        raise SystemExit("规则刷新时限无效。")
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, interrupted)
+    try:
+        with (work / "refresh.log").open("wb") as output:
+            child = subprocess.Popen(["bash", manager, "refresh-clash-rules", str(candidate), str(path), digest],
+                                     env=env, stdout=output, stderr=output, start_new_session=True, pass_fds=inherited_locks)
+            child.wait(timeout=refresh_timeout)
+        if child.returncode or group_alive(child.pid):
+            aborted = True
+            if group_alive(child.pid):
+                keep_recovery = not terminate_group(child)
+    except (subprocess.TimeoutExpired, RefreshInterrupted):
+        aborted = True
+        if child is not None:
+            keep_recovery = not terminate_group(child)
+    except OSError:
+        aborted = True
+        if child is not None:
+            keep_recovery = not terminate_group(child)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
+    if aborted:
+        diagnostic = (work / "refresh.log").read_bytes() if (work / "refresh.log").exists() else b""
+        if keep_recovery or b"SERVER_KIT_DIAGNOSTIC:subscription_rules_recovery_required" in diagnostic:
+            print("SERVER_KIT_DIAGNOSTIC:subscription_rules_recovery_required", file=sys.stderr)
+            print("发布恢复未确认，已保留私密恢复记录；请检查后再提交。", file=sys.stderr)
+        elif b"SERVER_KIT_DIAGNOSTIC:subscription_rules_changed" in diagnostic:
+            print("SERVER_KIT_DIAGNOSTIC:subscription_rules_changed", file=sys.stderr)
+        else:
+            print("订阅规则发布未完成，请重新读取状态；底层私有输出已隐藏。", file=sys.stderr)
+        raise SystemExit(1)
+    if load(path) != desired:
+        print("订阅规则提交结果不一致，请重新读取实际状态。", file=sys.stderr)
+        raise SystemExit(1)
+finally:
+    if not keep_recovery:
+        shutil.rmtree(work)
+print(json.dumps({"schema_version": 1, "operation": "set", **desired}, ensure_ascii=False))
+' "${SCRIPT_DIR}" "${SUBSCRIPTION_RULES_PATH}" "${FILE_MANAGER}"
+}
+
 sync_network_subscriptions_json() {
   local output=""
   [[ "${SERVER_KIT_NETWORK_WRITES:-0}" == "1" ]] || { fail "订阅写操作未启用。"; return 1; }
@@ -3265,6 +3410,8 @@ usage() {
       printf 'SSH\tserver-kit-manager.sh ssh-key add|rename|delete 标识 --json\t添加、改名或删除公钥\n'
       printf '节点\tserver-kit-manager.sh network domains set 节点 JSON --json\t设置节点地址强制解析并刷新订阅\n'
       printf '节点\tserver-kit-manager.sh network domains set-address IP JSON --json\t设置任意 IP 强制解析并刷新订阅\n'
+      printf '订阅\tserver-kit-manager.sh network subscription-rules status --json\t查看指定直连与 DNS 规则\n'
+      printf '订阅\tserver-kit-manager.sh network subscription-rules set --json\t从标准输入 JSON 保存私有规则\n'
       printf '自动化\tserver-kit-manager.sh snapshot\t输出只读 JSON 快照\n'
       printf '管理\tserver-kit-manager.sh start 服务|all\t启动服务\n'
       printf '管理\tserver-kit-manager.sh stop 服务|all\t停止服务\n'
@@ -3567,6 +3714,14 @@ main() {
             fail "network subscriptions 参数不正确。"
             exit 1
           fi
+          ;;
+        subscription-rules)
+          [[ $# -eq 4 && "${4:-}" == "--json" ]] || { fail "network subscription-rules 参数不正确。"; exit 1; }
+          case "${3:-}" in
+            status) show_subscription_rules_json ;;
+            set) acquire_change_lock; set_subscription_rules_json ;;
+            *) fail "订阅规则动作未登记。"; exit 1 ;;
+          esac
           ;;
         proxy)
           if [[ $# -eq 4 && "${3:-}" == "overview" && "${4:-}" == "--json" ]]; then

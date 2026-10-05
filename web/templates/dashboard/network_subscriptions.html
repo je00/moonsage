@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
-{% block extra_head %}<script src="{% static 'inline_tasks.js' %}" defer></script>{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'subscription_rules.css' %}"><script src="{% static 'inline_tasks.js' %}" defer></script><script src="{% static 'subscription_rules.js' %}" defer></script>{% endblock %}
 
 {% block title %}域名管理 · moonsage{% endblock %}
 
@@ -12,7 +12,9 @@
     <header class="page-header"><div><p class="eyebrow">DOMAIN</p><h1>域名管理</h1><p class="muted">集中管理稳定公网入口、动态 DNS 和全局订阅强制解析。</p></div><div class="header-actions"><span class="stage-badge">{% if public_endpoint_error %}入口状态未知{% else %}{{ public_endpoint.fqdn|default:"兼容 IP 模式" }}{% endif %}</span></div></header>
     {% include "dashboard/_messages.html" %}
     {% if snapshot_error %}<div class="alert danger" role="alert">{{ snapshot_error }}</div>{% endif %}
-    <nav class="page-shortcuts" aria-label="本页设置"><a href="#public-endpoint">公网入口</a><a href="#dynamic-dns">动态 DNS</a><a href="#host-records">订阅域名映射</a></nav>
+    <nav class="page-shortcuts" aria-label="本页设置"><a href="#subscription-rules">直连 / DNS</a><a href="#public-endpoint">公网入口</a><a href="#dynamic-dns">动态 DNS</a><a href="#host-records">订阅域名映射</a></nav>
+
+    {% include "dashboard/_subscription_rules.html" %}
 
     <section id="public-endpoint" class="inventory-panel">
       <div class="section-heading"><div><p class="eyebrow">公网恢复</p><h2>稳定公网入口</h2></div><span class="stage-badge">{% if public_endpoint_transaction.state == "pending" %}等待确认{% elif public_endpoint_error %}状态未知{% elif public_endpoint.configured %}已稳定{% else %}兼容 IP 模式{% endif %}</span></div>

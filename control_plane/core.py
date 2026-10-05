@@ -19,6 +19,7 @@ from lib.server_kit_node_domains import (
 from lib.server_kit_public_endpoint import normalize_fqdn
 from lib.server_kit_port_ranges import PortRangeError, format_ports, parse_ports
 from lib.server_kit_permission_batch import PermissionBatchError, normalize_rules
+from lib.server_kit_subscription_rules import normalize_config as normalize_subscription_rules
 
 from .actions import ActionCatalogError, ActionDefinition, validate_action_request
 from .tasks import PreparedAction, TaskEngineError
@@ -146,6 +147,14 @@ class Runner(Protocol):
 
     def network_overview(self) -> dict[str, Any]:
         """读取脱敏节点与订阅发布状态。"""
+
+    def subscription_rules_status(self) -> dict[str, Any]:
+        """读取仓库外保存的订阅私有规则。"""
+
+    def change_subscription_rules(
+        self, config: dict[str, Any], revision: str, actor: str,
+    ) -> dict[str, Any]:
+        """核验旧版本后保存私有规则并刷新现有订阅。"""
 
     def network_telemetry(self) -> dict[str, Any]:
         """读取共享采样器的节点状态和速率，不修改主机配置。"""
@@ -286,6 +295,8 @@ class ControlPlane:
             return self._prepare_proxy_task(arguments, actor)
         if protocol_action == "network.duckdns.change":
             return self._prepare_duckdns_task(arguments, actor)
+        if protocol_action == "network.subscription_rules.change":
+            return self._prepare_subscription_rules_task(arguments, actor)
         if protocol_action == "file.resource.change":
             return self._prepare_file_task(arguments, actor)
         if protocol_action == "ssh.key.change":
@@ -1277,6 +1288,51 @@ class ControlPlane:
             sensitive_params=sensitive_params,
         )
 
+    @staticmethod
+    def _subscription_rules_digest(config: dict[str, Any]) -> str:
+        clean = normalize_subscription_rules({
+            "version": config.get("version", 1),
+            "direct_rules": config.get("direct_rules"),
+            "dns_rules": config.get("dns_rules"),
+        })
+        return hashlib.sha256(json.dumps(
+            clean, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+
+    def _prepare_subscription_rules_task(
+        self, arguments: dict[str, object], actor: str,
+    ) -> PreparedAction:
+        if set(arguments) != {"direct_rules", "dns_rules", "expected_revision"} or not isinstance(actor, str) or not ACTOR_PATTERN.fullmatch(actor):
+            raise TaskEngineError("invalid_params", "订阅规则参数不正确。")
+        try:
+            desired = normalize_subscription_rules({"version": 1, "direct_rules": arguments["direct_rules"], "dns_rules": arguments["dns_rules"]})
+            definition = validate_action_request("network.subscription_rules.change", {
+                **arguments, "actor": actor, "confirmed": True,
+            })
+        except ValueError as error:
+            raise TaskEngineError("invalid_params", "订阅规则格式无效，请检查域名、网段与 DNS 地址。") from error
+        current = self._runner.subscription_rules_status()
+        revision = self._subscription_rules_digest(current)
+        if arguments.get("expected_revision") != revision:
+            raise TaskEngineError("facts_changed", "规则已被其他操作更新，请刷新页面后重新编辑。")
+        # Domains, CIDRs and resolver addresses stay out of plaintext task history.
+        return PreparedAction(
+            canonical_action=definition.name,
+            params={"direct_rules": [], "dns_rules": [], "actor": actor, "confirmed": True, "expected_revision": revision},
+            sensitive_params={"direct_rules": desired["direct_rules"], "dns_rules": desired["dns_rules"]},
+            preview={
+                "title": "更新指定直连与 DNS",
+                "summary": "规则独立保存在 VPS，重新克隆或升级不会覆盖；仅刷新订阅，不重启内网和代理服务。",
+                "facts": {
+                    "直连规则": f"{len(current['direct_rules'])} → {len(desired['direct_rules'])} 条",
+                    "DNS 规则": f"{len(current['dns_rules'])} → {len(desired['dns_rules'])} 条",
+                    "保存位置": "/etc/server-kit/subscription-rules.json（加密备份包含）",
+                    "客户端": "成功后刷新订阅生效；未指定域名仍使用统一出口 DNS",
+                },
+            },
+            fact_digest=revision, timeout_seconds=definition.timeout_seconds,
+        )
+
     def _prepare_subscription_task(
         self, protocol_action: str, arguments: dict[str, object], actor: str
     ) -> PreparedAction:
@@ -1956,6 +2012,15 @@ class ControlPlane:
             )
         if protocol_action == "network.subscriptions.sync":
             return self._runner.sync_network_subscriptions(actor)
+        if protocol_action == "network.subscription_rules.change":
+            try:
+                desired = normalize_subscription_rules({
+                    "version": 1, "direct_rules": params.get("direct_rules"),
+                    "dns_rules": params.get("dns_rules"),
+                })
+            except ValueError as error:
+                raise TaskEngineError("invalid_params", "订阅规则格式无效。") from error
+            return self._runner.change_subscription_rules(desired, str(params.get("expected_revision", "")), actor)
         if protocol_action == "network.subscription.rotate":
             return self._runner.rotate_network_subscription(
                 str(params.get("name", "")), actor
@@ -2019,6 +2084,9 @@ class ControlPlane:
                 "verified": True,
                 "configured": bool(current.get("configured")),
             }
+        if protocol_action == "network.subscription_rules.change":
+            current = self._runner.subscription_rules_status()
+            return {"fact_digest": self._subscription_rules_digest(current), "verified": True}
         if protocol_action == "network.duckdns.change":
             current = self._runner.duckdns_status()
             return {
@@ -2819,6 +2887,8 @@ class ControlPlane:
             return self._runner.file_resources()
         if action == "network.overview":
             return self._runner.network_overview()
+        if action == "network.subscription_rules.status":
+            return self._runner.subscription_rules_status()
         if action == "network.telemetry":
             return self._runner.network_telemetry()
         if action == "network.public_endpoint.status":

@@ -72,7 +72,7 @@ class ClashAirportProjectionTests(unittest.TestCase):
         self.assertNotIn("default-nameserver", dns)
         self.assertEqual(dns["proxy-server-nameserver"], domestic_doh)
         self.assertEqual(dns["nameserver-policy"]["geosite:cn"], domestic_doh)
-        self.assertEqual(dns["nameserver-policy"]["+.direct.example.com"], domestic_doh)
+        self.assertEqual(dns["nameserver-policy"]["+.byd.auto"], domestic_doh)
         self.assertTrue(dns["follow-rule"])
         self.assertEqual(dns["enhanced-mode"], "fake-ip")
 

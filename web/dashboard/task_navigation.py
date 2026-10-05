@@ -17,6 +17,7 @@ _DESTINATIONS = {
     "nodes": ("network-nodes", "内网节点", ""),
     "proxy": ("network-proxy-resources", "代理资源", ""),
     "domains": ("network-subscriptions", "域名管理", "#host-records"),
+    "subscription-rules": ("network-subscriptions", "域名管理", "#subscription-rules"),
     "endpoint": ("network-subscriptions", "域名管理", "#public-endpoint"),
     "ddns": ("network-subscriptions", "域名管理", "#dynamic-dns"),
     "files": ("file-resources", "文件资源", ""),
@@ -53,6 +54,8 @@ def _destination_key(task):
     preview = _mapping(task.get("preview"))
     facts = _mapping(preview.get("facts"))
     result = _mapping(task.get("result"))
+    if action == "network.subscription_rules.change":
+        return "subscription-rules"
     if action in {"network.node.domains", "network.address.domains"}:
         return "domains"
     if action.startswith("network.public_endpoint."):

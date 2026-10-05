@@ -1,0 +1,38 @@
+.subscription-rules .section-heading { gap: .7rem; flex-wrap: wrap; }
+.subscription-rules .muted { margin-bottom: 1rem; font-size: .86rem; }
+.subscription-rule-group { min-width: 0; margin: 1.2rem 0; padding: 0; border: 0; }
+.subscription-rule-group legend { padding: 0; margin-bottom: .45rem; font-size: 1rem; font-weight: 750; }
+.subscription-rule-group > .privacy-note { margin: 0 0 .8rem; }
+.subscription-rule-group > .copy-button { margin-top: .65rem; }
+[data-rule-list] { display: grid; gap: .65rem; }
+.subscription-rule-row { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr) auto; gap: .65rem; align-items: end; min-width: 0; padding: .9rem; border: 1px solid var(--line); border-radius: .85rem; background: var(--surface-subtle); }
+.subscription-rule-row label { display: grid; gap: .35rem; min-width: 0; color: var(--muted); font-size: .75rem; font-weight: 650; }
+.subscription-rule-row input, .subscription-rule-row select, .subscription-rule-row textarea { min-width: 0; width: 100%; min-height: 2.65rem; margin: 0; padding: .65rem .7rem; border: 1px solid var(--line); border-radius: .6rem; color: var(--text); background: var(--field-bg); font: inherit; font-size: .85rem; }
+.subscription-rule-row select { -webkit-appearance: none; appearance: none; height: 2.75rem; min-height: 44px; padding-right: 2.25rem; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: right 1rem center, right .7rem center; background-size: .3rem .3rem; background-repeat: no-repeat; }
+.subscription-rule-row textarea { resize: vertical; font-family: ui-monospace, monospace; line-height: 1.5; }
+.subscription-rule-row input:focus, .subscription-rule-row select:focus, .subscription-rule-row textarea:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subscription-rule-row small { color: var(--muted); font-size: .71rem; font-weight: 400; line-height: 1.55; }
+.subscription-dns-row { grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr) minmax(0, 1fr); }
+.subscription-rule-servers { grid-column: 1 / 3; }
+.subscription-rule-remove { min-height: 2.65rem; justify-self: end; }
+.subscription-dns-row .subscription-rule-remove { grid-column: 3; grid-row: 2; align-self: start; margin-top: 1.4rem; }
+.subscription-dns-notice { grid-column: 1 / -1; margin: 0; padding: .6rem .7rem; border-left: 2px solid var(--accent); border-radius: .3rem; background: var(--accent-soft); color: var(--accent-text); font-size: .76rem; line-height: 1.6; }
+.subscription-rule-empty { margin: 0; padding: .85rem; color: var(--muted); border: 1px dashed var(--line); border-radius: .75rem; font-size: .8rem; line-height: 1.6; }
+.subscription-rules-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.subscription-rules-footer > div { min-width: 0; }
+.subscription-rules-footer .privacy-note { margin: 0 0 .45rem; }
+.subscription-rules-footer [role="status"] { color: var(--accent-text); font-size: .75rem; }
+.subscription-rules-footer .action-button { flex-shrink: 0; }
+.subscription-rules-readonly { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.subscription-rules-readonly h3 { font-size: 1rem; }
+.subscription-rules-readonly article { display: grid; gap: .4rem; padding: .7rem 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.subscription-rules-readonly small { color: var(--muted); }
+.subscription-rules-readonly code { font-size: .78rem; }
+@media (max-width: 620px) {
+  .subscription-rule-row, .subscription-dns-row { grid-template-columns: minmax(0, 1fr); }
+  .subscription-rule-servers, .subscription-dns-row .subscription-rule-remove, .subscription-dns-notice { grid-column: 1; }
+  .subscription-dns-row .subscription-rule-remove { grid-row: auto; margin-top: 0; }
+  .subscription-rule-remove { justify-self: stretch; }
+  .subscription-rules-footer { align-items: stretch; flex-direction: column; }
+  .subscription-rules-readonly { grid-template-columns: minmax(0, 1fr); }
+}

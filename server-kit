@@ -79,6 +79,7 @@ preflight() {
     "${REPO_DIR}/web/requirements.lock" "${REPO_DIR}/control_plane/agent.py" \
     "${REPO_DIR}/lib/server_kit_backup.py" \
     "${REPO_DIR}/lib/server_kit_node_domains.py" \
+    "${REPO_DIR}/lib/server_kit_subscription_rules.py" \
     "${REPO_DIR}/lib/server_kit_public_endpoint.py" \
     "${REPO_DIR}/lib/server_kit_public_endpoint_transaction.py" \
     "${REPO_DIR}/lib/server_kit_duckdns.py" \

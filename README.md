@@ -2,7 +2,7 @@
 
 以 Debian VPS 为中心的星形内网，在内网面板管理权限与服务。
 
-原 server-kit；仓库名与部署命令不变。
+原 server-kit；部署命令保持兼容。
 
 [中文](README.md) · [Easy English](README.en.md) · [直接部署](#快速部署)
 
@@ -26,7 +26,7 @@ VPS / AWG 不可用 → 跨节点内网互访中断；速度与延迟受 VPS 和
 # 在 VPS 的 root 交互终端执行
 apt-get update
 apt-get install -y git ca-certificates python3
-git clone https://github.com/je00/server-kit.git /root/server-kit
+git clone https://github.com/je00/moonsage.git /root/server-kit
 cd /root/server-kit
 bash install-server-kit.sh install
 server-kit preflight
@@ -91,10 +91,13 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9080:10.20.0.1:9080 -p SSH_PORT 
 | VLESS / Clash / 文件 / Mosh | 部署向导；首次 Clash 需 VLESS REALITY＋机场链接＋出口配置 |
 | VPS 换 IP | 域名管理：稳定域名＋DNSPod / DuckDNS；[恢复步骤](docs/public-ip-change-runbook.md) |
 | 业务 DNS 走指定出口 | [出口一致 DNS](docs/operations.md#出口一致-dns)；不保证第三方 IP 定位相同 |
+| 指定直连 / DNS | 域名管理 → 指定直连与 DNS；批量编辑，保存后刷新客户端订阅 |
 | SSH / 防火墙 | 安全事务；高风险操作可能仅预览，按[安全设计](docs/management-plane-design.md)验收启用；第二条连接验证后才确认 |
 | 加密备份 / 审计 | 配置备份／任务与审计；恢复口令单独保存 |
 
 DDNS 受联网和 DNS 缓存影响，不承诺零中断。
+
+私有规则保存在 VPS 的 `/etc/server-kit/subscription-rules.json`，不进入 Git，重新部署不覆盖；换 VPS 时从加密备份恢复。仓库默认包含 `byd.auto` 国内 DNS，私有配置优先，包括删除该默认规则。
 
 <details>
 <summary>手机接入示例</summary>

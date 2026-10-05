@@ -22,8 +22,18 @@ from ruamel.yaml.util import load_yaml_guess_indent
 
 try:
     from .server_kit_public_endpoint import load as load_public_endpoint
+    from .server_kit_subscription_rules import (
+        SubscriptionRulesError, RESERVED_RESOLVER_ROUTES,
+        load as load_subscription_rules, normalize_config as normalize_subscription_rules,
+        normalize_domain as normalize_rule_domain, resolver_address,
+    )
 except ImportError:
     from server_kit_public_endpoint import load as load_public_endpoint
+    from server_kit_subscription_rules import (
+        SubscriptionRulesError, RESERVED_RESOLVER_ROUTES,
+        load as load_subscription_rules, normalize_config as normalize_subscription_rules,
+        normalize_domain as normalize_rule_domain, resolver_address,
+    )
 
 try:
     from .server_kit_node_domains import (
@@ -611,6 +621,256 @@ def configure_vps_resource_downloads(config: dict, relay_prefix: str = "SERVER.R
     ])
 
 
+def apply_subscription_rules(
+    config: dict,
+    state: dict,
+    *,
+    protected_endpoints: tuple[str, ...] | list[str] = (),
+    protected_networks: tuple[str, ...] | list[str] = (),
+    protected_hosts: dict[str, str] | None = None,
+    catalog: dict | None = None,
+) -> None:
+    """Apply explicit user exceptions without changing global/entry DNS.
+
+    Validation is completed before touching round-trip YAML objects. Resolver
+    IP routes are necessary because Stash 3.4.1 drops the DoH route fragment.
+    """
+    state = normalize_subscription_rules(state)
+    dns = config.get("dns")
+    rules = config.get("rules")
+    if not isinstance(dns, dict) or not isinstance(rules, list):
+        raise SubscriptionRulesError("订阅缺少有效 DNS 或路由配置。")
+    policies = dns.get("nameserver-policy", {})
+    if not isinstance(policies, dict):
+        raise SubscriptionRulesError("订阅 DNS 策略必须是映射。")
+    # This one public default is explicitly owned by the private rule editor.
+    # A saved empty file disables it; never silently adopt a different policy.
+    public_default = policies.get("+.byd.auto")
+    public_values = public_default if isinstance(public_default, list) else [public_default]
+    remove_public_default = public_values in (
+        ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"],
+        ["https://223.5.5.5/dns-query#DIRECT", "https://1.12.12.12/dns-query#DIRECT"],
+    )
+    if remove_public_default:
+        policies = {key: value for key, value in policies.items() if key != "+.byd.auto"}
+    if not state["direct_rules"] and not state["dns_rules"]:
+        if remove_public_default:
+            del dns["nameserver-policy"]["+.byd.auto"]
+        return
+
+    domains: set[str] = set()
+    protected_scopes: list[tuple[str, str]] = []
+    addresses: set[str] = set()
+    networks = [ipaddress.ip_network(value) for value in protected_networks]
+
+    def protect(value: object) -> None:
+        if not isinstance(value, str) or not value:
+            return
+        try:
+            addresses.add(str(ipaddress.ip_address(value.strip("[]"))))
+        except ValueError:
+            try:
+                match = "suffix" if value.startswith(("+.", "*.")) else "exact"
+                domain = normalize_rule_domain(value, match)
+                domains.add(domain)
+                protected_scopes.append((match, domain))
+            except SubscriptionRulesError:
+                pass
+
+    for value in (*protected_endpoints, *resource_endpoints(config)):
+        protect(value)
+    for node in config.get("proxies", []):
+        if isinstance(node, dict):
+            protect(node.get("server"))
+    for mapping in (config.get("hosts", {}), config.get("proxy-hosts", {}), protected_hosts or {}):
+        if isinstance(mapping, dict):
+            for hostname, address in mapping.items():
+                protect(hostname)
+                for item in address if isinstance(address, list) else [address]:
+                    protect(item)
+    for airport in (catalog or {}).get("airports", []):
+        if isinstance(airport, dict) and airport.get("enabled"):
+            inventory = airport.get("bootstrap_dns")
+            if isinstance(inventory, dict):
+                for domain in inventory.get("domains", []):
+                    protect(domain)
+
+    # Track established resolver roles, including user-owned existing policies.
+    # Never reroute another domain's DNS just to satisfy a new local exception.
+    resolver_roles: dict[str, set[str]] = {
+        address: {route} for address, route in RESERVED_RESOLVER_ROUTES.items()
+    }
+    for field, values in dns.items():
+        if "nameserver" not in str(field) and field != "fallback":
+            continue
+        rows = values.values() if isinstance(values, dict) else [values]
+        for row in rows:
+            for server in row if isinstance(row, list) else [row]:
+                if not isinstance(server, str):
+                    continue
+                plain, _, fragment = server.partition("#")
+                try:
+                    address = resolver_address(plain)
+                except ValueError:
+                    # Legacy private templates may still use hostname DoH.
+                    # Do not let a website exception turn that shared resolver
+                    # into DIRECT for all other domains on older Stash.
+                    try:
+                        host = urllib.parse.urlsplit(plain if "://" in plain else "//" + plain).hostname
+                    except ValueError:
+                        host = None
+                    protect(host)
+                    continue
+                roles = resolver_roles.setdefault(address, set())
+                if fragment:
+                    roles.add(fragment)
+                elif field in {"proxy-server-nameserver", "default-nameserver", "direct-nameserver"}:
+                    roles.add("DIRECT")
+                elif not roles:
+                    # Without an explicit fragment, follow-rule uses the first
+                    # matching IP route; the remaining DNS is general PROXY.
+                    target = "PROXY"
+                    for rule in rules:
+                        parts = str(rule).split(",")
+                        if len(parts) >= 3 and parts[0] in {"IP-CIDR", "IP-CIDR6"}:
+                            try:
+                                if ipaddress.ip_address(address) in ipaddress.ip_network(parts[1]):
+                                    target = parts[2]
+                                    break
+                            except ValueError:
+                                continue
+                    roles.add(target)
+
+    def matches(match: str, value: str, domain: str) -> bool:
+        return domain == value or (match == "suffix" and domain.endswith("." + value))
+
+    def overlaps(first: tuple[str, str], second: tuple[str, str]) -> bool:
+        return matches(*first, second[1]) or matches(*second, first[1])
+
+    def policy_scope(key: object) -> tuple[str, str] | None:
+        if not isinstance(key, str):
+            return None
+        match = "suffix" if key.startswith(("+.", "*.")) else "exact"
+        try:
+            return match, normalize_rule_domain(key, match)
+        except SubscriptionRulesError:
+            return None
+
+    generated: list[str] = []
+    policy_updates: list[tuple[str, list[str]]] = []
+    requested_roles: dict[str, str] = {}
+    all_protected_addresses = addresses | set(resolver_roles)
+    for item in state["direct_rules"]:
+        match, value = item["match"], item["value"]
+        if match == "cidr":
+            network = ipaddress.ip_network(value)
+            if (any(ipaddress.ip_address(address) in network for address in all_protected_addresses)
+                    or any(network.version == other.version and network.overlaps(other) for other in networks)):
+                raise SubscriptionRulesError("直连范围包含内网通道、节点入口或保留 DNS，拒绝覆盖保护路由。")
+            family = "IP-CIDR6" if network.version == 6 else "IP-CIDR"
+            generated.append(f"{family},{network},DIRECT,no-resolve")
+        else:
+            if any(overlaps((match, value), scope) for scope in protected_scopes):
+                raise SubscriptionRulesError("直连规则与节点入口、资源下载或强制解析域名重叠。")
+            generated.append(f"{'DOMAIN-SUFFIX' if match == 'suffix' else 'DOMAIN'},{value},DIRECT")
+
+    for item in state["dns_rules"]:
+        scope = item["match"], item["value"]
+        if any(overlaps(scope, protected) for protected in protected_scopes):
+            raise SubscriptionRulesError("DNS 规则与节点入口、资源下载或强制解析域名重叠。")
+        servers = []
+        for server in item["servers"]:
+            # The fragment prevents clients' bare-IP parser from recognizing
+            # IPv6. An explicit UDP URL keeps its colons out of the port field.
+            if "://" not in server and ipaddress.ip_address(server).version == 6:
+                server = f"udp://[{server}]:53"
+            servers.append(f"{server}#{item['route']}")
+        key = ("+." if item["match"] == "suffix" else "") + item["value"]
+        for existing_key, existing_value in policies.items():
+            old_scope = policy_scope(existing_key)
+            if old_scope is not None and overlaps(scope, old_scope):
+                old_values = existing_value if isinstance(existing_value, list) else [existing_value]
+                if existing_key != key or old_values != servers:
+                    raise SubscriptionRulesError("域名已有重叠 DNS 策略，请先处理原有策略，不能静默覆盖。")
+        for previous_key, previous_servers in policy_updates:
+            if overlaps(scope, policy_scope(previous_key)) and previous_servers != servers:
+                raise SubscriptionRulesError("DNS 规则范围重叠且服务器不同，请拆分规则。")
+        for server in item["servers"]:
+            address = resolver_address(server)
+            if address in addresses or any(ipaddress.ip_address(address) in network for network in networks):
+                raise SubscriptionRulesError("DNS 服务器不能指向节点入口或受保护的内网通道。")
+            established = resolver_roles.get(address, set())
+            if established and established != {item["route"]}:
+                raise SubscriptionRulesError("DNS IP 已被其他策略用于不同线路，不能改变其出口。")
+            for rule in rules:
+                parts = str(rule).split(",")
+                if len(parts) >= 3 and parts[0] in {"IP-CIDR", "IP-CIDR6"}:
+                    try:
+                        conflict = (ipaddress.ip_address(address) in ipaddress.ip_network(parts[1])
+                                    and parts[2] != item["route"])
+                    except ValueError:
+                        continue
+                    if conflict:
+                        raise SubscriptionRulesError("DNS IP 与现有路由冲突，不能覆盖原有线路。")
+            for direct in state["direct_rules"]:
+                if (direct["match"] == "cidr" and item["route"] != "DIRECT"
+                        and ipaddress.ip_address(address) in ipaddress.ip_network(direct["value"])):
+                    raise SubscriptionRulesError("直连 CIDR 包含代理 DNS，不能同时使用。")
+            requested_roles[address] = item["route"]
+        policy_updates.append((key, servers))
+
+    # Validation above deliberately has no mutations. Infrastructure retains
+    # first priority; later resource/AWG projection prepends its own safeguards.
+    protected_rules = []
+    protected_network_strings = {str(network) for network in networks}
+    for rule in rules:
+        parts = str(rule).split(",")
+        if len(parts) < 3:
+            continue
+        if parts[0] == "DOMAIN" and parts[1] in domains:
+            protected_rules.append(rule)
+        elif parts[0] in {"IP-CIDR", "IP-CIDR6"}:
+            try:
+                network = ipaddress.ip_network(parts[1])
+            except ValueError:
+                continue
+            if (str(network) in protected_network_strings or
+                    (network.prefixlen == network.max_prefixlen and str(network.network_address) in all_protected_addresses)):
+                protected_rules.append(rule)
+    infrastructure_rules = list(dict.fromkeys([
+        *protected_rules,
+        *(endpoint_rule(address, route) for address, route in requested_roles.items()),
+    ]))
+    prepend_rules(config, infrastructure_rules)
+    # Explicit website/LAN exceptions belong after the template's leading
+    # reject block, but before its general LAN/UDP routing. They must not turn
+    # an advertising/security rejection into a direct connection. Keep every
+    # other template rule in its existing relative order.
+    generated = list(dict.fromkeys(generated))
+    for rule in generated:
+        while rule in rules:
+            rules.remove(rule)
+    position = len(infrastructure_rules)
+    while position < len(rules):
+        parts = str(rules[position]).split(",")
+        target = parts[-2] if len(parts) > 2 and parts[-1] == "no-resolve" else parts[-1]
+        if target not in {"REJECT", "REJECT-DROP"}:
+            break
+        position += 1
+    for rule in reversed(generated):
+        rules.insert(position, rule)
+    if remove_public_default or policy_updates:
+        policies = dns.setdefault("nameserver-policy", CommentedMap())
+        if remove_public_default:
+            del policies["+.byd.auto"]
+        for key, servers in policy_updates:
+            set_generated_yaml_field(policies, key, CommentedSeq(servers))
+    if policy_updates:
+        dns["direct-nameserver-follow-policy"] = True
+        dns["respect-rules"] = True
+        dns["follow-rule"] = True
+
+
 def configure_provider_empty_fallback(config: dict, relay_name: str) -> None:
     """Mihomo 的远程 Provider 为空时使用服务端中转，禁止退回 DIRECT。"""
 
@@ -1069,6 +1329,7 @@ def main() -> int:
     parser.add_argument("--proxy-inputs", type=Path, required=True)
     parser.add_argument("--node-domains", type=Path, required=True)
     parser.add_argument("--server-relay", type=Path, required=True)
+    parser.add_argument("--subscription-rules", type=Path, default=Path("/etc/server-kit/subscription-rules.json"))
     parser.add_argument("--output-config", type=Path, required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--server-address", required=True)
@@ -1076,6 +1337,10 @@ def main() -> int:
     parser.add_argument("--cert", required=True)
     parser.add_argument("--key", required=True)
     args = parser.parse_args()
+    try:
+        private_rules = load_subscription_rules(args.subscription_rules)
+    except SubscriptionRulesError as error:
+        fail(str(error))
 
     base_text = args.base.read_text(encoding="utf-8")
     yaml = YAML(typ="rt")
@@ -1218,6 +1483,16 @@ def main() -> int:
     used_tokens: set[str] = set()
     downloads = []
 
+    def apply_private_rules(subscription: dict) -> None:
+        try:
+            apply_subscription_rules(
+                subscription, private_rules,
+                protected_endpoints=[awg_endpoint, relay_address, stable_endpoint, str(vless_template.get("server", ""))],
+                protected_networks=[awg_network], protected_hosts=host_mappings, catalog=proxy_inputs,
+            )
+        except SubscriptionRulesError as error:
+            fail(str(error))
+
     def publish(
         name: str,
         kind: str,
@@ -1257,6 +1532,7 @@ def main() -> int:
         if name in clean_mode_nodes:
             apply_clean_projection(subscription)
         add_vless_server_relay(subscription, name, selected_exit_ids_for_node)
+        apply_private_rules(subscription)
         configure_vps_resource_downloads(subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")))
         apply_internal_hosts(subscription, host_mappings)
         add_route_exclusion(subscription, awg_network)
@@ -1295,6 +1571,7 @@ def main() -> int:
         vless_relay_group_names, preserved_relay_names = add_vless_server_relay(
             subscription, name, selected_exit_ids_for_node
         )
+        apply_private_rules(subscription)
         configure_vps_resource_downloads(subscription, str((relay_config or {}).get("vless_node_name", "SERVER.RELAY.VLESS")))
         apply_internal_hosts(subscription, host_mappings)
         apply_vless_proxy_hosts(subscription, host_mappings)

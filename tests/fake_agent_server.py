@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.server_kit_port_ranges import format_ports, parse_ports
+from lib.server_kit_subscription_rules import normalize_config, revision
 from preview_fixtures import build_fixtures, make_task
 
 
@@ -36,6 +37,17 @@ class PreviewAgent:
             self._telemetry_started = time.monotonic()
             self._permission_batches: dict[str, dict] = {}
             self._inline_changes: dict[str, dict] = {}
+            self._subscription_rules = normalize_config({
+                "version": 1,
+                "direct_rules": [] if scenario == "empty" else [
+                    {"match": "suffix", "value": "office.internal.example"},
+                    {"match": "cidr", "value": "192.168.50.0/24"},
+                ],
+                "dns_rules": [] if scenario == "empty" else [
+                    {"match": "suffix", "value": "resolver-demo.example", "route": "DIRECT",
+                     "servers": ["https://223.5.5.5/dns-query", "https://1.12.12.12/dns-query"]},
+                ],
+            })
 
     def dispatch(self, action: str, params: dict) -> dict:
         with self.lock:
@@ -51,6 +63,11 @@ class PreviewAgent:
                     "components": [intent], "view": view}
         if action == "system.snapshot":
             return self.data["overview"]
+        if action == "network.subscription_rules.status":
+            if params:
+                raise ValueError("规则读取不接受参数。")
+            return {"schema_version": 1, **self._subscription_rules,
+                    "revision": revision(self._subscription_rules)}
         if action == "network.telemetry":
             if params:
                 raise ValueError("实时采样不接受参数。")
@@ -103,6 +120,7 @@ class PreviewAgent:
             allowed = {"service.change", "file.resource.change", "network.duckdns.change",
                        "network.public_endpoint.change", "network.node.change", "network.node.domains",
                        "network.address.domains", "network.node.import", "network.permission.change",
+                       "network.subscription_rules.change",
                        "network.permission.batch",
                        "network.subscriptions.sync", "network.subscription.rotate", "network.subscription.state",
                        "network.proxy.update", "deployment.install", "security.transaction.change",
@@ -205,6 +223,16 @@ class PreviewAgent:
         if not isinstance(arguments, dict):
             return None
         change = {"action": action, "title": "预览合成数据变更", "facts": {}}
+        if action == "network.subscription_rules.change":
+            if arguments.get("expected_revision") != revision(self._subscription_rules):
+                raise ValueError("规则已被其他操作更新，请重新加载后再保存。")
+            config = normalize_config({"version": 1, "direct_rules": arguments.get("direct_rules"),
+                                       "dns_rules": arguments.get("dns_rules")})
+            return {**change, "title": "更新指定直连与 DNS", "config": config,
+                    "expected_revision": arguments["expected_revision"],
+                    "facts": {"直连规则": len(config["direct_rules"]),
+                              "DNS 规则": len(config["dns_rules"]),
+                              "保存位置": "仅 VPS 私有配置，不写入 Git"}}
         if action == "network.node.domains":
             name = arguments.get("name")
             if not any(node["name"] == name for node in self.data["network"]["nodes"]):
@@ -272,7 +300,11 @@ class PreviewAgent:
         """Apply only to fixture dictionaries. No files, commands or network I/O."""
         action = change["action"]
         network = self.data["network"]
-        if action == "network.node.domains":
+        if action == "network.subscription_rules.change":
+            if change["expected_revision"] != revision(self._subscription_rules):
+                raise ValueError("规则已更新，请重新预览。")
+            self._subscription_rules = copy.deepcopy(change["config"])
+        elif action == "network.node.domains":
             next(node for node in network["nodes"] if node["name"] == change["name"])["domains"] = list(change["domains"])
         elif action == "network.address.domains":
             network["host_records"] = [item for item in network["host_records"] if item["address"] != change["address"]]

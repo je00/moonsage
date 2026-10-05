@@ -2,7 +2,7 @@
 
 A star network with one Debian VPS at the center. Manage access and services in a private dashboard.
 
-Previously server-kit. The repository name and commands stay the same.
+Previously server-kit. Existing deployment commands still work.
 
 [中文](README.md) · [Easy English](README.en.md) · [Start here](#quick-start)
 
@@ -26,7 +26,7 @@ VPS / AWG down → private links between devices stop. Speed and delay depend on
 # Run in an interactive root terminal on the VPS
 apt-get update
 apt-get install -y git ca-certificates python3
-git clone https://github.com/je00/server-kit.git /root/server-kit
+git clone https://github.com/je00/moonsage.git /root/server-kit
 cd /root/server-kit
 bash install-server-kit.sh install
 server-kit preflight
@@ -97,10 +97,13 @@ Permissions and recent handshakes **do not prove live connectivity**. Arrows poi
 | VLESS / Clash / files / Mosh | **部署向导** (Setup guide); first Clash setup needs VLESS REALITY + upstream URL + exit configuration |
 | New VPS IP | **域名管理** (Domains): stable hostname + DNSPod / DuckDNS; [recovery steps](docs/public-ip-change-runbook.md) |
 | Business DNS through an exit | [Exit-consistent DNS](docs/operations.md#出口一致-dns); IP location labels may still differ |
+| Custom direct / DNS rules | **域名管理 → 指定直连与 DNS**; edit rules together, save, then refresh the client subscription |
 | SSH / firewall | **安全事务** (Security); high-risk actions may be preview-only; pass [safety checks](docs/management-plane-design.md) before enabling; test a second connection before confirming |
 | Encrypted backups / audit | **配置备份 / 任务与审计**; save the recovery password separately |
 
 DDNS depends on network readiness and DNS caches: no zero-downtime promise.
+
+Private rules stay in `/etc/server-kit/subscription-rules.json` on the VPS, not in Git. Updates keep them; on a new VPS, restore an encrypted backup. The repo includes domestic DNS for `byd.auto` by default. Your saved rules take priority, including removing this default.
 
 <details>
 <summary>Phone setup example</summary>

@@ -25,6 +25,7 @@
     if (path === "/network/permissions/preview/" && field("operation") === "deny") return {key: `permissions:${field("client")}`, region: form.closest(".permission-list")};
     if (path === "/network/nodes/domains/preview/") return {key: `domains:${field("name")}`, region: form.closest("article"), collection: ".global-host-records:not(.custom-host-records)"};
     if (path === "/network/addresses/domains/preview/") return {key: `address:${field("address")}`, region: form.closest("article"), collection: ".custom-host-records"};
+    if (path === "/network/subscription-rules/preview/") return {key: "subscription-rules", region: form.closest("[data-subscription-rules]")};
     if (path === "/network/proxy/" && proxyOperations.has(field("operation"))) {
       const airport = field("operation").startsWith("airport_");
       return {key: `${airport ? "airport" : "exit"}:${field(airport ? "airport_id" : "exit_id")}`,
@@ -160,6 +161,7 @@
       if (!doc.querySelector("#main-content") || doc.querySelector(".content > .alert.danger")) throw new Error("最新列表读取失败，原列表未覆盖。");
       const ready = {"/network/nodes/": "nodes", "/network/subscriptions/": "domains", "/network/proxy/": "proxy"}[window.location.pathname];
       if (!ready || !doc.querySelector(`[data-inline-ready="${ready}"]`)) throw new Error("最新列表不完整，原列表未覆盖。请稍后重新读取。");
+      if (flow.config.key === "subscription-rules" && !doc.querySelector('[data-subscription-rules][data-rules-ready="true"]')) throw new Error("规则状态读取失败，原编辑内容未覆盖。请稍后重新读取。");
       const before = regions(document), after = regions(doc);
       let retained = false;
       before.forEach((item, key) => {

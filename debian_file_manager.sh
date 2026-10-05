@@ -25,6 +25,7 @@ CLASH_INPUT_CONFIG="${SERVER_KIT_CONFIG_DIR}/clash-inputs.json"
 SERVER_RELAY_CONFIG="${SERVER_RELAY_CONFIG:-${SERVER_KIT_CONFIG_DIR}/server-relay.json}"
 CLASH_PUBLICATION_STATE="${CLASH_PUBLICATION_STATE:-${SERVER_KIT_CONFIG_DIR}/clash-publications.json}"
 NODE_DOMAINS_PATH="${NODE_DOMAINS_PATH:-${SERVER_KIT_CONFIG_DIR}/node-domains.json}"
+SUBSCRIPTION_RULES_PATH="${SUBSCRIPTION_RULES_PATH:-${SERVER_KIT_CONFIG_DIR}/subscription-rules.json}"
 VLESS_ACCESS_PATH="${VLESS_ACCESS_PATH:-${SERVER_KIT_CONFIG_DIR}/vless-access.json}"
 XRAY_CONFIG_PATH="${XRAY_CONFIG_PATH:-/usr/local/etc/xray/config.json}"
 XRAY_STATE_FILE="${XRAY_STATE_FILE:-/etc/default/vless-manager}"
@@ -1557,6 +1558,7 @@ generate_clash_bundle() {
     --publication-state "${CLASH_PUBLICATION_STATE}" \
     --proxy-inputs "${CLASH_INPUT_CONFIG}" \
     --node-domains "${NODE_DOMAINS_PATH}" \
+    --subscription-rules "${SUBSCRIPTION_RULES_PATH}" \
     --server-relay "${SERVER_RELAY_CONFIG}" \
     --output-config "${output_config}" \
     --port "${port}" \
@@ -2477,9 +2479,149 @@ PYTHON
   show_clash_links
 }
 
+publish_clash_rules_bundle() {
+  python3 - "$1" "$2" "${CLASH_PAYLOAD_DIR}" "${CONFIG_PATH}" "${SERVICE_NAME}" \
+    "${RULES_COMMIT_PATH:-}" "${SUBSCRIPTION_RULES_PATH}" "${RULES_EXPECTED_REVISION:-}" "${SCRIPT_DIR}" <<'PYTHON'
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[9])
+from lib.server_kit_subscription_rules import atomic_write, load, revision
+
+staging, candidate, payload, config = map(Path, sys.argv[1:5])
+service = sys.argv[5]
+rules_path = Path(sys.argv[6]) if sys.argv[6] else None
+rules_candidate, expected_revision = Path(sys.argv[7]), sys.argv[8]
+if service != "secure-clash-service":
+    raise SystemExit("规则发布只允许刷新订阅下载服务。")
+if any(payload.parent.glob(".clash-rules-recovery-*")):
+    print("SERVER_KIT_DIAGNOSTIC:subscription_rules_recovery_required", file=sys.stderr)
+    raise SystemExit("存在未完成的规则恢复记录，请先通过现有管理连接核验。")
+controller = os.environ.get("RULES_CONTROLLER_PID", "")
+if controller:
+    try:
+        os.kill(int(controller), 0)
+    except (OSError, ValueError):
+        raise SystemExit("规则发布协调进程已退出，拒绝提交候选配置。")
+desired = load(rules_candidate) if rules_path is not None else None
+if rules_path is not None:
+    if rules_path.is_symlink() or revision(load(rules_path)) != expected_revision:
+        print("SERVER_KIT_DIAGNOSTIC:subscription_rules_changed", file=sys.stderr)
+        raise SystemExit(1)
+
+class PublicationInterrupted(Exception):
+    pass
+
+def interrupted(signum, frame):
+    raise PublicationInterrupted()
+
+for sig in (signal.SIGTERM, signal.SIGINT):
+    signal.signal(sig, interrupted)
+
+recovery = Path(tempfile.mkdtemp(prefix=".clash-rules-recovery-", dir=payload.parent))
+previous_payload = recovery / "subscriptions"
+previous_config = recovery / "config.json"
+previous_rules = recovery / "rules.json"
+metadata = config.stat()
+shutil.copy2(config, previous_config)
+previous_config.chmod(0o600)
+rules_existed = rules_path is not None and rules_path.exists()
+if rules_existed:
+    shutil.copy2(rules_path, previous_rules)
+    previous_rules.chmod(0o600)
+if desired is not None:
+    atomic_write(recovery / "candidate-rules.json", desired)
+journal = recovery / "transaction.json"
+journal.write_text(json.dumps({"version": 1, "payload_path": str(payload), "config_path": str(config),
+                               "rules_path": str(rules_path) if rules_path is not None else "",
+                               "rules_existed": rules_existed, "state": "prepared"}), encoding="utf-8")
+journal.chmod(0o600)
+with journal.open("rb") as handle:
+    os.fsync(handle.fileno())
+
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+sync_directory(recovery)
+sync_directory(recovery.parent)
+for snapshot in (previous_config, previous_rules):
+    if snapshot.exists():
+        with snapshot.open("rb") as handle:
+            os.fsync(handle.fileno())
+
+def replace_config(source):
+    descriptor, temporary = tempfile.mkstemp(prefix=".clash-rules-config-", dir=config.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as target:
+            target.write(source.read_bytes())
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temporary, metadata.st_mode & 0o777)
+        os.chown(temporary, metadata.st_uid, metadata.st_gid)
+        os.replace(temporary, config)
+        sync_directory(config.parent)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def restart():
+    for args in (["restart", service], ["is-active", "--quiet", service]):
+        subprocess.run(["systemctl", *args], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+
+try:
+    os.replace(payload, previous_payload)
+    sync_directory(recovery)
+    os.replace(staging, payload)
+    sync_directory(payload.parent)
+    replace_config(candidate)
+    if rules_path is not None:
+        atomic_write(rules_path, desired)
+    restart()
+except (OSError, ValueError, subprocess.SubprocessError, PublicationInterrupted):
+    # A second cancellation must not interrupt the finite rollback window.
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, signal.SIG_IGN)
+    try:
+        if previous_payload.exists():
+            if payload.exists():
+                shutil.rmtree(payload)
+            os.replace(previous_payload, payload)
+            sync_directory(payload.parent)
+        replace_config(previous_config)
+        if rules_path is not None:
+            if rules_existed:
+                os.replace(previous_rules, rules_path)
+            else:
+                rules_path.unlink(missing_ok=True)
+            sync_directory(rules_path.parent)
+        restart()
+    except (OSError, subprocess.SubprocessError):
+        # Recovery evidence must survive the outer shell cleanup.
+        print("SERVER_KIT_DIAGNOSTIC:subscription_rules_recovery_required", file=sys.stderr)
+        print("订阅恢复未完成，已保留私密恢复目录；请检查订阅下载服务。", file=sys.stderr)
+        raise SystemExit(1)
+    shutil.rmtree(recovery)
+    raise SystemExit("规则发布失败，原订阅内容与配置已恢复。")
+for sig in (signal.SIGTERM, signal.SIGINT):
+    signal.signal(sig, signal.SIG_IGN)
+shutil.rmtree(recovery)
+PYTHON
+}
+
 refresh_clash_subscriptions() {
   local requested_path="${1:-}"
   local requested_address="${2:-}"
+  local rules_only="${3:-0}"
   local source_path=""
   local prepared_source=""
   local vless_summary=""
@@ -2498,7 +2640,9 @@ refresh_clash_subscriptions() {
   server_address="${requested_address:-$(read_config_field server_address)}"
   validate_port "${port}" || { echo "现有订阅端口无效。" >&2; return 1; }
   validate_public_address "${server_address}" || { echo "现有订阅地址无效。" >&2; return 1; }
-  sync_server_relay_if_configured
+  if [[ "${rules_only}" != "1" ]]; then
+    sync_server_relay_if_configured
+  fi
 
   prepared_source="$(mktemp "${CONFIG_DIR}/.clash-source.XXXXXX")"
   vless_summary="$(mktemp "${CONFIG_DIR}/.clash-vless-summary.XXXXXX")"
@@ -2513,9 +2657,38 @@ refresh_clash_subscriptions() {
   generate_clash_bundle "${prepared_source}" "${staging_dir}" "${CLASH_PAYLOAD_DIR}" \
     "${CONFIG_PATH}" "${temp_config}" "${port}" "${server_address}" "${vless_summary}"
   verify_clash_vless_relay_bundle "${staging_dir}"
+  if [[ "${rules_only}" == "1" ]]; then
+    # This mode may change only file contents. Tokens, payload paths, ports,
+    # certificates and every other worker setting must remain unchanged.
+    python3 - "${CONFIG_PATH}" "${temp_config}" <<'PYTHON'
+import json
+import sys
+
+def worker_settings(path):
+    with open(path, encoding="utf-8") as handle:
+        config = json.load(handle)
+    if not isinstance(config, dict) or not isinstance(config.get("downloads"), list):
+        raise ValueError("invalid worker configuration")
+    for item in config["downloads"]:
+        item.pop("sha256", None)
+        item.pop("file_size", None)
+    config["downloads"].sort(key=lambda item: item["payload_path"])
+    return config
+
+if worker_settings(sys.argv[1]) != worker_settings(sys.argv[2]):
+    raise SystemExit("现有订阅身份或服务配置已变化，请先同步订阅；本次规则未发布。")
+PYTHON
+  fi
   find "${staging_dir}" -type f -exec chmod 640 {} +
   chown -R root:"${SERVICE_GROUP}" "${staging_dir}"
   chmod 750 "${staging_dir}"
+
+  if [[ "${rules_only}" == "1" ]]; then
+    publish_clash_rules_bundle "${staging_dir}" "${temp_config}" || return 1
+    staging_dir=""
+    echo "已更新私有规则与订阅；AWG、Xray、SSH 和 DNS 服务保持运行。"
+    return 0
+  fi
 
   mv -- "${CLASH_PAYLOAD_DIR}" "${rollback_dir}"
   mv -- "${staging_dir}" "${CLASH_PAYLOAD_DIR}"
@@ -3041,6 +3214,7 @@ usage() {
 Clash 订阅服务:
   install-clash [YAML] 安装或更新
   refresh-clash [YAML] 使用已保存参数同步当前节点
+  refresh-clash-rules  仅重新发布私有规则（不重启内网、代理或 DNS）
   start-clash          启动
   stop-clash           停止
   restart-clash        重启
@@ -3080,6 +3254,17 @@ main() {
     refresh-clash)
       use_clash_service
       refresh_clash_subscriptions "${2:-}"
+      ;;
+    refresh-clash-rules)
+      [[ $# -eq 1 || $# -eq 4 ]] || { echo "refresh-clash-rules 参数不正确。" >&2; return 1; }
+      if [[ $# -eq 4 ]]; then
+        SUBSCRIPTION_RULES_PATH="$2"
+        RULES_COMMIT_PATH="$3"
+        RULES_EXPECTED_REVISION="$4"
+        [[ "${RULES_EXPECTED_REVISION}" =~ ^[0-9a-f]{64}$ ]] || return 1
+      fi
+      use_clash_service
+      refresh_clash_subscriptions "" "" 1
       ;;
     audit-public-ip)
       audit_public_ip

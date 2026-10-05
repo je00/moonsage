@@ -1,0 +1,10 @@
+<div class="subscription-rule-row{% if kind == 'dns' %} subscription-dns-row{% endif %}" data-rule-row="{{ kind }}">
+  <label class="subscription-rule-match">匹配方式<select name="{{ kind }}_match"><option value="suffix"{% if not rule or rule.match == 'suffix' %} selected{% endif %}>域名及子域名</option><option value="exact"{% if rule.match == 'exact' %} selected{% endif %}>完整域名</option>{% if kind == 'direct' %}<option value="cidr"{% if rule.match == 'cidr' %} selected{% endif %}>IP 网段</option>{% endif %}</select></label>
+  <label class="subscription-rule-target"><span data-rule-value-label>{% if rule.match == 'cidr' %}IP 网段{% else %}域名{% endif %}</span><input name="{{ kind }}_value" value="{{ rule.value|default:'' }}" required maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="{% if rule.match == 'cidr' %}192.168.50.0/24{% else %}example.com{% endif %}"></label>
+  {% if kind == 'dns' %}
+  <label class="subscription-rule-route">DNS 路径<select name="dns_route"><option value="PROXY"{% if rule.route != 'DIRECT' %} selected{% endif %}>跟随选中出口</option><option value="DIRECT"{% if rule.route == 'DIRECT' %} selected{% endif %}>直连（显式例外）</option></select></label>
+  <label class="subscription-rule-servers">DNS 地址<textarea name="dns_servers" rows="2" required maxlength="2052" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://8.8.8.8/dns-query">{{ rule.servers|join:', ' }}</textarea><small>换行或逗号分隔。代理出口需公网 IP 的 HTTPS DoH；直连也支持数字 IP。</small></label>
+  <p class="subscription-dns-notice" data-rule-direct-notice{% if rule.route != 'DIRECT' %} hidden{% endif %}>仅这些域名的 DNS 直连，其余仍统一出口。</p>
+  {% endif %}
+  <button class="copy-button danger-quiet subscription-rule-remove" type="button" data-rule-remove hidden aria-label="移除此条{% if kind == 'dns' %} DNS{% else %}直连{% endif %}规则">移除</button>
+</div>

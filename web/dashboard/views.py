@@ -34,6 +34,7 @@ from django.views.decorators.http import require_http_methods
 from control_plane.client import AgentError
 from lib.server_kit_bootstrap import BootstrapError, decode_enrollment_token
 from lib.server_kit_port_ranges import PortRangeError, normalize_ports
+from lib.server_kit_subscription_rules import MAX_RULES, normalize_config as normalize_subscription_rules
 
 from .snapshot import read_snapshot
 from .ssh_scripts import SshScriptBundle
@@ -70,6 +71,8 @@ from .services import (
     preview_subscription_sync_task,
     preview_subscription_rotate_task,
     preview_subscription_state_task,
+    subscription_rules_status,
+    preview_subscription_rules_task,
     audit_log,
     record_audit_event,
     proxy_resources,
@@ -537,7 +540,102 @@ def network_notice_dismiss(request):
 @never_cache
 def network_subscriptions(request):
     """集中管理稳定入口、动态 DNS 和全局强制解析。"""
-    return render(request, "dashboard/network_subscriptions.html", _network_context(request, "subscriptions"))
+    context = _network_context(request, "subscriptions")
+    try:
+        rules = _checked_subscription_rules_status(subscription_rules_status())
+    except (AgentError, OSError, ValueError, TypeError):
+        context["subscription_rules_error"] = True
+    else:
+        context["subscription_rules"] = rules
+    return render(request, "dashboard/network_subscriptions.html", context)
+
+
+def _checked_subscription_rules_status(rules):
+    """An unreadable policy must never turn into an editable empty policy."""
+    if (not isinstance(rules, dict) or rules.get("schema_version") != 1
+            or rules.get("version") != 1 or not isinstance(rules.get("revision"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", rules["revision"])):
+        raise ValueError("规则状态格式无效。")
+    clean = normalize_subscription_rules({key: rules.get(key) for key in ("version", "direct_rules", "dns_rules")})
+    return {**rules, **clean}
+
+
+def _subscription_rules_form(post):
+    result = {}
+    for kind, fields in (("direct", ("match", "value")), ("dns", ("match", "value", "servers", "route"))):
+        columns = [post.getlist(f"{kind}_{field}") for field in fields]
+        lengths = {len(column) for column in columns}
+        if len(lengths) != 1 or len(columns[0]) > MAX_RULES:
+            raise ValueError("规则字段不完整或超过 128 条，请重新加载后重试。")
+        rows = []
+        for values in zip(*columns):
+            row = dict(zip(fields, (value.strip() for value in values)))
+            if not row["value"] and (kind == "direct" or not row["servers"]):
+                continue
+            if kind == "dns":
+                row["servers"] = [v for v in re.split(r"[\s,，]+", row["servers"]) if v]
+            rows.append(row)
+        result[kind + "_rules"] = rows
+    return normalize_subscription_rules(result)
+
+
+@login_required
+@never_cache
+@require_POST
+def network_subscription_rules_preview(request):
+    if not _can_manage(request.user):
+        return HttpResponseForbidden("只有管理员可以修改指定直连和 DNS。")
+    try:
+        if request.content_type not in {"application/x-www-form-urlencoded", "multipart/form-data"}:
+            raise ValueError("请使用规则编辑表单提交。")
+        # CSRF may already have parsed a multipart form; reading request.body
+        # here would raise RawPostDataException after that stream is consumed.
+        if int(request.META.get("CONTENT_LENGTH") or 0) > 256 * 1024:
+            raise ValueError("规则内容过大。")
+        if request.POST.get("rules_present") != "1":
+            raise ValueError("规则表单不完整，未创建任务。")
+        expected_revision = request.POST.get("expected_revision", "")
+        if not re.fullmatch(r"[a-f0-9]{64}", expected_revision):
+            raise ValueError("规则版本无效，请重新加载后重试。")
+        rules = _subscription_rules_form(request.POST)
+    except (ValueError, UnicodeError, RequestDataTooBig) as error:
+        return HttpResponseBadRequest(str(error), content_type="text/plain; charset=utf-8")
+    try:
+        current = _checked_subscription_rules_status(subscription_rules_status())
+    except (AgentError, OSError, ValueError, TypeError):
+        return HttpResponse("当前规则无法读取，已阻止覆盖；原规则不会清除。", status=503)
+    if current["revision"] != expected_revision:
+        return HttpResponse("规则已被其他操作更新，请重新加载后再编辑，避免覆盖新规则。", status=409)
+    try:
+        task = preview_subscription_rules_task(rules["direct_rules"], rules["dns_rules"], request.user.get_username(), expected_revision)
+    except AgentError as error:
+        if getattr(error, "code", "") in {"invalid_params", "operation_forbidden"}:
+            return HttpResponseBadRequest(str(error), content_type="text/plain; charset=utf-8")
+        return HttpResponse("暂时无法生成预览，原规则未更改，请稍后重试。", status=503)
+    except OSError:
+        return HttpResponse("暂时无法生成预览，原规则未更改，请稍后重试。", status=503)
+    return render(request, "dashboard/subscription_rules_confirm.html", {"task": task, "active_page": "subscriptions"})
+
+
+@login_required
+@never_cache
+@require_POST
+def network_subscription_rules_execute(request):
+    if not _can_manage(request.user):
+        return HttpResponseForbidden("只有管理员可以修改指定直连和 DNS。")
+    task_id = request.POST.get("task_id", "")
+    if not TASK_ID_PATTERN.fullmatch(task_id):
+        return HttpResponseBadRequest("规则任务确认无效。")
+    try:
+        task = change_task(task_id)
+        if (task.get("id") != task_id or task.get("actor") != request.user.get_username()
+                or task.get("action") != "network.subscription_rules.change"):
+            return HttpResponseForbidden("该任务不属于当前账号或不是规则变更。")
+        if task.get("state") == "waiting_confirmation":
+            confirm_change_task(task_id, request.user.get_username())
+    except (AgentError, OSError):
+        return HttpResponse("暂时无法确认任务，请先查询原任务状态，不要重复提交。", status=503)
+    return redirect("change-task-detail", task_id=task_id)
 
 
 @login_required

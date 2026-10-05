@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from django.conf import settings
 
 from control_plane.client import AgentClient, AgentError
+
+
+SUBSCRIPTION_RULES_REQUEST_MAX_BYTES = 60 * 1024
 
 
 def read_host(intent: str, service_id: str = "") -> dict[str, Any]:
@@ -274,6 +278,31 @@ def preview_subscription_sync_task(actor: str) -> dict[str, Any]:
     return AgentClient(settings.SERVER_KIT_AGENT_SOCKET).request(
         "task.preview",
         {"action": "network.subscriptions.sync", "arguments": {}, "actor": actor},
+    )
+
+
+def subscription_rules_status() -> dict[str, Any]:
+    return AgentClient(settings.SERVER_KIT_AGENT_SOCKET).request(
+        "network.subscription_rules.status", {},
+    )
+
+
+def preview_subscription_rules_task(
+    direct_rules: list[dict[str, Any]], dns_rules: list[dict[str, Any]], actor: str,
+    expected_revision: str,
+) -> dict[str, Any]:
+    params = {"action": "network.subscription_rules.change", "arguments": {
+        "direct_rules": direct_rules, "dns_rules": dns_rules,
+        "expected_revision": expected_revision,
+    }, "actor": actor}
+    # Match AgentClient's actual UTF-8 wire encoding, including its fixed-size
+    # request identifier and newline. Leave headroom below the 64 KiB socket cap.
+    envelope = {"version": 1, "request_id": "0" * 32, "action": "task.preview", "params": params}
+    encoded_size = len(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
+    if encoded_size > SUBSCRIPTION_RULES_REQUEST_MAX_BYTES:
+        raise AgentError("规则内容超过 60 KiB，请减少规则数量或缩短 DNS 地址后重试；现有规则未修改。", "invalid_params")
+    return AgentClient(settings.SERVER_KIT_AGENT_SOCKET).request(
+        "task.preview", params,
     )
 
 

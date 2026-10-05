@@ -344,6 +344,17 @@ _single(_definition(
     "network.overview", "network.overview", EMPTY, executor="network_overview",
 ), "network.overview 不接受参数。")
 _single(_definition(
+    "network.subscription_rules.status", "network.subscription_rules.status", EMPTY,
+    executor="subscription_rules_status",
+), "network.subscription_rules.status 不接受参数。")
+_single(_change(
+    "network.subscription_rules.change", "network.subscription_rules.change",
+    frozenset({"direct_rules", "dns_rules", "expected_revision", "actor", "confirmed"}),
+    ChangeLevel.CONFIRMATION, preview="subscription_rules", fact_scope="subscription_rules",
+    executor="change_subscription_rules", verifier="subscription_rules_status",
+    sensitive=frozenset({"direct_rules", "dns_rules"}), timeout=240,
+), "network.subscription_rules.change 参数不正确。")
+_single(_definition(
     "network.telemetry", "network.telemetry", EMPTY, executor="network_telemetry",
 ), "network.telemetry 不接受参数。")
 _single(_definition(

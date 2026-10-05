@@ -14,7 +14,7 @@ from .services import change_task, confirm_change_task
 
 INLINE_ACTIONS = frozenset({
     "network.proxy.update", "network.node.domains", "network.address.domains",
-    "network.permission.deny",
+    "network.permission.deny", "network.subscription_rules.change",
 })
 
 

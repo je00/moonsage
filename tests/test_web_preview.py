@@ -16,6 +16,29 @@ from preview_fixtures import SERVICE_IDS, TASK_IDS, build_fixtures
 
 
 class WebPreviewTests(unittest.TestCase):
+    def test_subscription_rules_preview_is_private_in_memory_and_checks_revision(self):
+        agent = PreviewAgent()
+        before = agent.dispatch('network.subscription_rules.status', {})
+        task = agent.dispatch('task.preview', {
+            'action': 'network.subscription_rules.change', 'actor': 'preview-operator',
+            'arguments': {'expected_revision': before['revision'], 'direct_rules': [
+                {'match': 'suffix', 'value': 'edited.internal.example'}
+            ], 'dns_rules': []},
+        })
+        self.assertEqual(agent.dispatch('network.subscription_rules.status', {}), before)
+        self.assertNotIn('edited.internal.example', json.dumps(task))
+        with self.assertRaises(ValueError):
+            agent.dispatch('task.confirm', {'task_id': task['id'], 'actor': 'another-operator'})
+        agent.dispatch('task.confirm', {'task_id': task['id'], 'actor': 'preview-operator'})
+        after = agent.dispatch('network.subscription_rules.status', {})
+        self.assertEqual(after['direct_rules'], [{'match': 'suffix', 'value': 'edited.internal.example'}])
+        self.assertEqual(after['dns_rules'], [])
+        self.assertNotEqual(after['revision'], before['revision'])
+        with self.assertRaises(ValueError):
+            agent.dispatch('task.preview', {'action': 'network.subscription_rules.change',
+                'actor': 'preview-operator', 'arguments': {'expected_revision': before['revision'],
+                                                        'direct_rules': [], 'dns_rules': []}})
+
     def test_complete_page_intents_are_available(self):
         agent = PreviewAgent()
         for intent in ("overview", "network", "proxy", "file"):

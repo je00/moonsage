@@ -1,0 +1,30 @@
+<section id="subscription-rules" class="inventory-panel subscription-rules" data-subscription-rules data-inline-key="subscription-rules" data-rules-ready="{% if subscription_rules_error %}false{% else %}true{% endif %}">
+  <div class="section-heading"><div><p class="eyebrow">CLASH / STASH</p><h2>指定直连 / 指定 DNS</h2></div><span class="stage-badge">私有设置</span></div>
+  {% if subscription_rules_error %}
+  <div class="alert danger" role="alert">暂时无法读取规则，已禁止覆盖。现有规则不会清除。</div><a class="secondary-button" href="{% url 'network-subscriptions' %}#subscription-rules">重新加载</a>
+  {% else %}
+  <p class="muted">规则独立保存在 VPS，重新克隆、升级不会覆盖，不进入 Git 仓库。</p>
+  {% if network.writes_enabled and request.user.is_superuser or network.writes_enabled and request.user.is_staff %}
+  <form method="post" action="{% url 'network-subscription-rules-preview' %}" data-rules-form>
+    {% csrf_token %}<input type="hidden" name="rules_present" value="1"><input type="hidden" name="expected_revision" value="{{ subscription_rules.revision }}">
+    <fieldset class="subscription-rule-group"><legend>指定直连</legend><p class="privacy-note">匹配的流量不走代理；不会自动改变它的 DNS 路径。</p>
+      <div data-rule-list="direct">{% for rule in subscription_rules.direct_rules %}{% include "dashboard/_subscription_rule_row.html" with kind="direct" rule=rule %}{% empty %}<p class="subscription-rule-empty" data-rule-empty>还没有指定直连规则。</p>{% endfor %}</div>
+      <button class="copy-button" type="button" data-rule-add="direct" hidden>＋ 添加直连规则</button>
+    </fieldset>
+    <fieldset class="subscription-rule-group"><legend>指定 DNS</legend><p class="privacy-note">指定域名使用哪些 DNS。默认跟随选中出口，最多 4 个地址。</p>
+      <div data-rule-list="dns">{% for rule in subscription_rules.dns_rules %}{% include "dashboard/_subscription_rule_row.html" with kind="dns" rule=rule %}{% empty %}<p class="subscription-rule-empty" data-rule-empty>还没有自定义 DNS 规则，其余域名沿用现有策略。</p>{% endfor %}</div>
+      <button class="copy-button" type="button" data-rule-add="dns" hidden>＋ 添加 DNS 规则</button>
+    </fieldset>
+    <div class="subscription-rules-footer"><div><p class="privacy-note">仅影响生成的 Clash / Stash 订阅，不修改 Xray 服务端强制 DNS。保存后请在客户端刷新订阅。</p><span data-rules-feedback role="status" aria-live="polite">可一起编辑多条，统一预览后保存。</span></div><button class="action-button" type="submit" data-rules-save>预览并保存</button></div>
+    <noscript><p class="alert neutral">请启用 JavaScript 以添加或删除规则；已有规则仍可编辑并提交预览。</p></noscript>
+  </form>
+  <template data-rule-template="direct">{% include "dashboard/_subscription_rule_row.html" with kind="direct" %}</template>
+  <template data-rule-template="dns">{% include "dashboard/_subscription_rule_row.html" with kind="dns" %}</template>
+  {% else %}
+  <div class="subscription-rules-readonly">
+    <section><h3>指定直连</h3>{% for rule in subscription_rules.direct_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% elif rule.match == 'cidr' %}IP 网段{% else %}完整域名{% endif %} · 直连</small></article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
+    <section><h3>指定 DNS</h3>{% for rule in subscription_rules.dns_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% else %}完整域名{% endif %} · {% if rule.route == 'DIRECT' %}DNS 直连{% else %}跟随选中出口{% endif %}</small><code>{{ rule.servers|join:' · ' }}</code></article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
+  </div><p class="privacy-note">当前为只读模式；仅影响生成的 Clash / Stash 订阅。</p>
+  {% endif %}
+  {% endif %}
+</section>

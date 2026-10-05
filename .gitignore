@@ -1,6 +1,8 @@
 # 本地订阅和密钥材料
 shared_file.yaml
 clash-inputs.json
+subscription-rules.json
+clash_skeleton.private.yaml
 .env
 *.key
 *.pem

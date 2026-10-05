@@ -8,6 +8,7 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 from datetime import datetime
@@ -17,6 +18,7 @@ from typing import Any, Callable
 from control_plane.errors import TaskExecutionError
 from lib.server_kit_audit import append_audit
 from lib.server_kit_permission_batch import normalize_rules
+from lib.server_kit_subscription_rules import normalize_config as normalize_subscription_rules
 from lib.server_kit_topology_facts import valid_topology_context
 
 
@@ -364,6 +366,82 @@ class ScriptRunner:
                 self._telemetry_sampler = NetworkTelemetrySampler()
             sampler = self._telemetry_sampler
         return sampler.read()
+
+    def subscription_rules_status(self) -> dict[str, Any]:
+        completed = self._run(["network", "subscription-rules", "status", "--json"], self._timeout)
+        if completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > 300_000:
+            raise RuntimeError("无法读取指定直连与 DNS 规则")
+        try:
+            payload = json.loads(completed.stdout)
+            if not isinstance(payload, dict) or set(payload) != {"schema_version", "version", "direct_rules", "dns_rules", "revision"} or payload.get("schema_version") != 1:
+                raise ValueError("schema")
+            clean = normalize_subscription_rules({key: value for key, value in payload.items() if key not in {"schema_version", "revision"}})
+            revision = hashlib.sha256(json.dumps(clean, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            if payload.get("revision") != revision:
+                raise ValueError("revision")
+        except ValueError as error:
+            raise RuntimeError("订阅私有规则格式无效，未使用空规则替代") from error
+        return {"schema_version": 1, **clean, "revision": revision}
+
+    def _run_subscription_rules(self, input_text: str) -> subprocess.CompletedProcess[str]:
+        arguments = ["network", "subscription-rules", "set", "--json"]
+        if self._executor is not subprocess.run:
+            return self._run(arguments, 180.0, input_text)
+        command = [self._manager_path, *arguments]
+        # subprocess.run's default timeout only kills the outer shell. Keep a
+        # process group so the Python coordinator receives TERM and can finish
+        # its bounded publisher rollback before the final hard-stop deadline.
+        with subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace", env=self._environment(),
+            cwd="/", start_new_session=True,
+        ) as child:
+            try:
+                stdout, stderr = child.communicate(input_text, timeout=180.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    child.communicate(timeout=60.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    child.communicate()
+                raise
+            return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+
+    def change_subscription_rules(self, config: dict[str, Any], revision: str, actor: str) -> dict[str, Any]:
+        desired = normalize_subscription_rules(config)
+        if not re.fullmatch(r"[0-9a-f]{64}", revision) or not actor or len(actor) > 150:
+            raise ValueError("订阅规则版本或操作账号无效")
+        operation = "subscription_rules_set"
+        try:
+            completed = self._run_subscription_rules(
+                json.dumps({**desired, "expected_revision": revision}, ensure_ascii=False) + "\n")
+        except subprocess.TimeoutExpired as error:
+            self._append_audit(actor, "network", operation, "timeout")
+            raise RuntimeError("订阅规则更新超时，请重新读取实际状态") from error
+        if completed.returncode != 0:
+            self._append_audit(actor, "network", operation, "failed")
+            if "SERVER_KIT_DIAGNOSTIC:subscription_rules_changed" in completed.stderr.splitlines():
+                raise TaskExecutionError("facts_changed", "规则已被其他操作更新，请重新读取后提交。")
+            if "SERVER_KIT_DIAGNOSTIC:subscription_rules_recovery_required" in completed.stderr.splitlines():
+                raise TaskExecutionError("subscription_rules_recovery_required", "发布恢复未完成，已保留私密恢复记录；请通过现有管理连接核验后再提交。")
+            raise RuntimeError("订阅规则更新失败，请重新读取实际状态；底层私有输出已隐藏")
+        try:
+            payload = json.loads(completed.stdout)
+            if payload != {"schema_version": 1, "operation": "set", **desired}:
+                raise ValueError("schema")
+        except ValueError as error:
+            self._append_audit(actor, "network", operation, "indeterminate")
+            raise RuntimeError("订阅规则更新响应无效，请重新读取实际状态") from error
+        self._append_audit(actor, "network", operation, "success")
+        # Full rules are returned only by the dedicated read endpoint, never task history.
+        return {"schema_version": 1, "operation": "set", "direct_count": len(desired["direct_rules"]), "dns_count": len(desired["dns_rules"])}
 
     def network_overview(self) -> dict[str, Any]:
         completed = self._run(["network", "overview", "--json"], self._timeout)
