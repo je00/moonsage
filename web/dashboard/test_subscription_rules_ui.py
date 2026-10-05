@@ -101,12 +101,38 @@ class SubscriptionRulesUITests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, "direct.example.com")
         self.assertContains(response, "https://8.8.8.8/dns-query")
+        self.assertContains(response, "通过当前代理出口查询")
+        self.assertContains(response, "客户端 → 当前代理出口 → 指定 DNS")
+        self.assertNotContains(response, "跟随选中出口")
         self.assertNotContains(response, "data-rules-form")
         self.assertNotContains(response, "data-rule-template")
         self.assertEqual(self.client.post(self.preview_url, self.data()).status_code, 403)
         self.assertEqual(self.client.post(self.execute_url, {"task_id": TASK_ID}).status_code, 403)
         self.preview.assert_not_called()
         self.confirm.assert_not_called()
+
+    def test_dns_route_options_describe_query_path_without_changing_wire_values(self):
+        response = self.client.get(self.url)
+        for text in ("DNS 查询怎么走", "客户端 → 当前代理出口 → 指定 DNS",
+                     "随客户端 PROXY 组的选择切换。", "只改变 DNS 查询路径，不改变网站流量。",
+                     "data-rule-route-preview", "data-rule-route-help"):
+            self.assertContains(response, text)
+        self.assertContains(response, '<option value="PROXY" selected>通过当前代理出口查询</option>', html=True)
+        self.assertContains(response, '<option value="DIRECT">不走代理，直接查询</option>', html=True)
+        self.assertNotContains(response, "跟随选中出口")
+        self.assertNotContains(response, "直连（显式例外）")
+        self.preview.assert_not_called()
+        self.confirm.assert_not_called()
+
+    def test_readonly_direct_dns_uses_same_explicit_path_labels(self):
+        self.status.return_value["dns_rules"][0].update(route="DIRECT", servers=["223.5.5.5"])
+        self.client.force_login(self.viewer)
+        response = self.client.get(self.url)
+        self.assertContains(response, "不走代理，直接查询")
+        self.assertContains(response, "客户端 → 指定 DNS（不走代理）")
+        self.assertContains(response, "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。")
+        self.assertNotContains(response, "data-rules-form")
+        self.assertNotContains(response, "跟随选中出口")
 
     def test_writes_disabled_has_no_editor(self):
         self.overview.return_value["writes_enabled"] = False
@@ -188,7 +214,8 @@ class SubscriptionRulesUITests(TestCase):
     def test_direct_dns_only_exception_is_explicit(self):
         self.status.return_value["dns_rules"][0].update(route="DIRECT", servers=["223.5.5.5"])
         response = self.client.get(self.url)
-        self.assertContains(response, "仅这些域名的 DNS 直连，其余仍统一出口")
+        self.assertContains(response, "客户端 → 指定 DNS（不走代理）")
+        self.assertContains(response, "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。")
         self.assertContains(response, 'value="DIRECT" selected')
         response = self.client.post(self.preview_url, self.data(dns_route=["DIRECT"], dns_servers=["223.5.5.5\n1.12.12.12"]))
         self.assertEqual(response.status_code, 200)

@@ -16,7 +16,8 @@
 .subscription-rule-servers { grid-column: 1 / 3; }
 .subscription-rule-remove { min-height: 2.65rem; justify-self: end; }
 .subscription-dns-row .subscription-rule-remove { grid-column: 3; grid-row: 2; align-self: start; margin-top: 1.4rem; }
-.subscription-dns-notice { grid-column: 1 / -1; margin: 0; padding: .6rem .7rem; border-left: 2px solid var(--accent); border-radius: .3rem; background: var(--accent-soft); color: var(--accent-text); font-size: .76rem; line-height: 1.6; }
+.subscription-dns-notice { display: grid; gap: .2rem; grid-column: 1 / -1; margin: 0; padding: .6rem .7rem; border-left: 2px solid var(--accent); border-radius: .3rem; background: var(--accent-soft); color: var(--accent-text); font-size: .76rem; line-height: 1.6; }
+.subscription-dns-notice strong { font-weight: 650; }
 .subscription-rule-empty { margin: 0; padding: .85rem; color: var(--muted); border: 1px dashed var(--line); border-radius: .75rem; font-size: .8rem; line-height: 1.6; }
 .subscription-rules-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .subscription-rules-footer > div { min-width: 0; }

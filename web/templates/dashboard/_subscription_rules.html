@@ -11,7 +11,7 @@
       <div data-rule-list="direct">{% for rule in subscription_rules.direct_rules %}{% include "dashboard/_subscription_rule_row.html" with kind="direct" rule=rule %}{% empty %}<p class="subscription-rule-empty" data-rule-empty>还没有指定直连规则。</p>{% endfor %}</div>
       <button class="copy-button" type="button" data-rule-add="direct" hidden>＋ 添加直连规则</button>
     </fieldset>
-    <fieldset class="subscription-rule-group"><legend>指定 DNS</legend><p class="privacy-note">指定域名使用哪些 DNS。默认跟随选中出口，最多 4 个地址。</p>
+    <fieldset class="subscription-rule-group"><legend>指定 DNS</legend><p class="privacy-note">指定解析服务器，最多 4 个地址。下方选择只改变 DNS 查询路径，不改变网站流量。</p>
       <div data-rule-list="dns">{% for rule in subscription_rules.dns_rules %}{% include "dashboard/_subscription_rule_row.html" with kind="dns" rule=rule %}{% empty %}<p class="subscription-rule-empty" data-rule-empty>还没有自定义 DNS 规则，其余域名沿用现有策略。</p>{% endfor %}</div>
       <button class="copy-button" type="button" data-rule-add="dns" hidden>＋ 添加 DNS 规则</button>
     </fieldset>
@@ -23,7 +23,7 @@
   {% else %}
   <div class="subscription-rules-readonly">
     <section><h3>指定直连</h3>{% for rule in subscription_rules.direct_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% elif rule.match == 'cidr' %}IP 网段{% else %}完整域名{% endif %} · 直连</small></article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
-    <section><h3>指定 DNS</h3>{% for rule in subscription_rules.dns_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% else %}完整域名{% endif %} · {% if rule.route == 'DIRECT' %}DNS 直连{% else %}跟随选中出口{% endif %}</small><code>{{ rule.servers|join:' · ' }}</code></article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
+    <section><h3>指定 DNS</h3>{% for rule in subscription_rules.dns_rules %}<article><strong>{{ rule.value }}</strong><small>{% if rule.match == 'suffix' %}域名及子域名{% else %}完整域名{% endif %} · {% if rule.route == 'DIRECT' %}不走代理，直接查询{% else %}通过当前代理出口查询{% endif %}</small><code>{{ rule.servers|join:' · ' }}</code>{% include "dashboard/_subscription_dns_path.html" %}</article>{% empty %}<p class="privacy-note">尚无规则</p>{% endfor %}</section>
   </div><p class="privacy-note">当前为只读模式；仅影响生成的 Clash / Stash 订阅。</p>
   {% endif %}
   {% endif %}

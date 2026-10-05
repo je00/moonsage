@@ -9,8 +9,18 @@
     const input = row.querySelector(`[name="${kind}_value"]`);
     input.placeholder = match === "cidr" ? "192.168.50.0/24" : "example.com";
     row.querySelector("[data-rule-value-label]").textContent = match === "cidr" ? "IP 网段" : "域名";
-    const notice = row.querySelector("[data-rule-direct-notice]");
-    if (notice) notice.hidden = row.querySelector('[name="dns_route"]').value !== "DIRECT";
+    const notice = row.querySelector("[data-rule-route-notice]");
+    if (notice) {
+      const route = row.querySelector('[name="dns_route"]').value;
+      if (notice.dataset.route !== route) {
+        const direct = route === "DIRECT";
+        notice.dataset.route = route;
+        notice.querySelector("[data-rule-route-preview]").textContent = direct
+          ? "客户端 → 指定 DNS（不走代理）" : "客户端 → 当前代理出口 → 指定 DNS";
+        notice.querySelector("[data-rule-route-help]").textContent = direct
+          ? "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。" : "随客户端 PROXY 组的选择切换。";
+      }
+    }
   }
   function refreshForm(form, dirty = true) {
     form.querySelectorAll("[data-rule-list]").forEach(list => {

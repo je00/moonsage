@@ -11,6 +11,20 @@ if (base.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(base.hostn
     || base.username || base.password || base.pathname !== "/") throw new Error("Loopback preview required");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "moonsage-rules-ui-"));
 const report = {directory, checks: [], screenshots: [], errors: []};
+const dnsPaths = {
+  PROXY: {label: "通过当前代理出口查询", path: "客户端 → 当前代理出口 → 指定 DNS", help: "随客户端 PROXY 组的选择切换。"},
+  DIRECT: {label: "不走代理，直接查询", path: "客户端 → 指定 DNS（不走代理）", help: "从设备直连，不是让 VPS 代查；这些域名不再走统一 DNS 出口。"},
+};
+
+async function checkDNSPath(row, route) {
+  assert.equal(await row.locator('[name="dns_route"]').inputValue(), route);
+  assert.equal(await row.locator('[name="dns_route"] option:checked').innerText(), dnsPaths[route].label);
+  assert.equal(await row.locator("[data-rule-route-preview]").innerText(), dnsPaths[route].path);
+  assert.equal(await row.locator("[data-rule-route-preview]").isVisible(), true);
+  assert.equal(await row.locator("[data-rule-route-help]").innerText(), dnsPaths[route].help);
+  assert.equal(await row.locator("[data-rule-route-help]").isVisible(), true);
+  assert.deepEqual(await row.locator('[name="dns_route"] option').evaluateAll(options => options.map(option => option.value)), ["PROXY", "DIRECT"]);
+}
 
 async function check(browser, label, width, theme, user = "preview") {
   const context = await browser.newContext({viewport: {width, height: width < 768 ? 844 : 1100},
@@ -42,16 +56,36 @@ async function check(browser, label, width, theme, user = "preview") {
     if (user === "viewer") {
       assert.equal(await region.locator("form").count(), 0);
       assert.match(await region.innerText(), /只读/);
+      assert.equal((await region.innerText()).includes(dnsPaths.DIRECT.label), true);
+      assert.equal((await region.innerText()).includes(dnsPaths.DIRECT.path), true);
+      assert.equal((await region.innerText()).includes(dnsPaths.DIRECT.help), true);
+      assert.doesNotMatch(await region.innerText(), /跟随选中出口|直连（显式例外）/);
     } else {
       const form = region.locator("form");
       assert.equal(await form.locator("[data-rules-save]").isDisabled(), true);
+      assert.equal((await form.innerText()).includes("只改变 DNS 查询路径，不改变网站流量。"), true);
+      const existingDNS = form.locator('[data-rule-row="dns"]').first();
+      await checkDNSPath(existingDNS, "DIRECT");
+      assert.equal((await existingDNS.locator(".subscription-rule-route").innerText()).startsWith("DNS 查询怎么走"), true);
+      const existingDNSValues = await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value]));
+      const submissions = [];
+      page.on("request", request => { if (request.method() === "POST") submissions.push(request.url()); });
       await form.locator('[data-rule-add="direct"]').click();
       await form.locator('[data-rule-row="direct"]').last().locator('[name="direct_value"]').fill("added-office.example");
       await form.locator('[data-rule-add="dns"]').click();
       const dns = form.locator('[data-rule-row="dns"]').last();
       await dns.locator('[name="dns_value"]').fill("added-resolver.example");
       await dns.locator('[name="dns_servers"]').fill("https://8.8.8.8/dns-query");
-      assert.equal(await dns.locator('[name="dns_route"]').inputValue(), "PROXY");
+      await checkDNSPath(dns, "PROXY");
+      // Switching the explanatory path is local-only and leaves other rows untouched.
+      await dns.locator('[name="dns_route"]').selectOption("DIRECT");
+      await checkDNSPath(dns, "DIRECT");
+      assert.deepEqual(submissions, []);
+      await checkDNSPath(existingDNS, "DIRECT");
+      assert.deepEqual(await existingDNS.locator("input, select, textarea").evaluateAll(nodes => nodes.map(node => [node.name, node.value])), existingDNSValues);
+      await dns.locator('[name="dns_route"]').selectOption("PROXY");
+      await checkDNSPath(dns, "PROXY");
+      assert.deepEqual(submissions, []);
       assert.equal(await page.locator(".custom-host-create-form").count(), 0);
       await form.locator("[data-rules-save]").click();
       const modal = page.locator("[data-inline-task-modal]");
@@ -59,6 +93,8 @@ async function check(browser, label, width, theme, user = "preview") {
       assert.doesNotMatch(await modal.innerText(), /added-office|added-resolver/);
       await modal.locator("[data-inline-edit]").click();
       assert.equal(await dns.locator('[name="dns_value"]').inputValue(), "added-resolver.example");
+      await checkDNSPath(dns, "PROXY");
+      await checkDNSPath(existingDNS, "DIRECT");
       assert.equal(await form.locator('[data-rule-row="direct"]').last().locator('[name="direct_value"]').inputValue(), "added-office.example");
       await form.locator("[data-rules-save]").click();
       await modal.locator("[data-inline-confirm]").click();
@@ -67,8 +103,14 @@ async function check(browser, label, width, theme, user = "preview") {
       await modal.locator("[data-inline-done]").click();
       await modal.waitFor({state: "hidden"});
       assert.equal(await region.locator('[name="direct_value"][value="added-office.example"]').count(), 1);
+      await checkDNSPath(region.locator('[data-rule-row="dns"]').first(), "DIRECT");
+      await checkDNSPath(region.locator('[data-rule-row="dns"]').last(), "PROXY");
+      assert.equal(await region.locator('[name="dns_value"]').last().inputValue(), "added-resolver.example");
       assert.equal(page.url(), new URL(rulesPath, base).href);
       assert.equal(await region.locator("[data-rules-save]").isDisabled(), true);
+      const proxyFilename = `${label}-${width}-${theme}-${user}-proxy-path.png`;
+      await region.locator('[data-rule-row="dns"]').last().screenshot({path: path.join(directory, proxyFilename)});
+      report.screenshots.push(proxyFilename);
       // Delete all entries in one operation; an empty configuration is intentional.
       while (await region.locator("[data-rule-remove]").count()) await region.locator("[data-rule-remove]").last().click();
       await region.locator("[data-rules-save]").click();
@@ -82,6 +124,8 @@ async function check(browser, label, width, theme, user = "preview") {
       await context.request.get(new URL("__preview__/scenario/rich/", base).href);
       await page.reload();
     }
+    // After in-place saves/reload, don't photograph a retained keyboard skip-link focus.
+    await page.evaluate(() => document.activeElement?.blur());
     await region.scrollIntoViewIfNeeded();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
     for (const button of await region.locator("button:visible").all()) {
@@ -107,7 +151,7 @@ async function check(browser, label, width, theme, user = "preview") {
       report.screenshots.push(menuFilename);
       await menu.locator("[data-mobile-menu-close]").click();
     }
-    report.checks.push(`${label} ${width} ${theme} ${user}: dedicated-page navigation, no overflow, batch save/delete, cancel preserves drafts, save stays on page`);
+    report.checks.push(`${label} ${width} ${theme} ${user}: dedicated-page navigation, no overflow, explicit DNS paths, local route preview, stable route values, batch save/delete, cancel preserves drafts, save stays on page`);
   } finally { await context.close(); }
 }
 
