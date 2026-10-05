@@ -1,0 +1,542 @@
+"""Saved-policy topology remains conservative, bounded, and credential-free."""
+
+import copy
+import json
+import unittest
+from unittest.mock import patch
+
+from dashboard.topology import build_topology
+
+
+def node(name, kind="awg", **values):
+    return {"name": name, "kind": kind, "address": "10.20.0.10" if name == "desk" else "10.20.0.11",
+            "state": "已启用", "access_mode": "unrestricted" if kind == "awg" else "restricted",
+            "permissions": [], **values}
+
+
+def rule(target="desk", ip="10.20.0.10", network="tcp", ports=None):
+    return {"target": target, "ip": ip, "network": network, "ports": [22] if ports is None else ports}
+
+
+def relation(model, identifier):
+    return next(item for item in model["relations"] if item["node"]["id"] == identifier)
+
+
+class TopologyModelTests(unittest.TestCase):
+    def test_empty_and_malformed_overviews_are_json_safe(self):
+        for value in (None, [], "bad", {}, {"nodes": None}, {"nodes": [None, 4, {}, node("../../bad"), node("bad", kind="other"), node("bad", kind=[])]}):
+            with self.subTest(value=value):
+                model = build_topology(value)
+                self.assertEqual(model["selected"]["id"], "hub")
+                self.assertEqual(model["selected_id"], "hub")
+                self.assertEqual(model["relations"], [])
+                self.assertEqual(model["links"], [])
+                self.assertEqual(model["summary"]["nodes"], 0)
+                json.dumps(model)
+
+    def test_selection_prefers_explicit_then_protected_then_first_then_hub(self):
+        overview = {"nodes": [node("phone", "vless"), node("desk", protected=True)]}
+        self.assertEqual(build_topology(overview)["selected"]["id"], "awg:desk")
+        self.assertEqual(build_topology(overview, "vless:phone")["selected"]["id"], "vless:phone")
+        self.assertEqual(build_topology(overview, "hub")["selected"]["id"], "hub")
+        self.assertEqual(build_topology(overview, ["bad"])["selected"]["id"], "awg:desk")
+        overview["nodes"][1]["protected"] = False
+        self.assertEqual(build_topology(overview, "missing")["selected"]["id"], "vless:phone")
+
+    def test_source_only_policy_does_not_require_destination_permission(self):
+        overview = {"nodes": [node("desk"), node("phone", access_mode="restricted")]}
+        edge = relation(build_topology(overview), "awg:phone")
+        self.assertEqual(edge["forward"]["status"], "allowed")
+        self.assertEqual(edge["reverse"]["status"], "denied")
+        self.assertEqual(edge["relation"], "outbound")
+
+    def test_unrestricted_ignores_saved_rules_and_two_directions_can_be_full(self):
+        model = build_topology({"nodes": [node("desk", permissions=[None]), node("phone")]})
+        edge = relation(model, "awg:phone")
+        self.assertEqual(edge["relation"], "mutual")
+        self.assertEqual(edge["forward"]["scopes"], ["全部协议 · 全部端口"])
+        self.assertFalse(edge["forward"]["warnings"])
+
+    def test_awg_named_target_uses_current_address_and_union_compresses_ports(self):
+        permissions = [rule("phone", "192.0.2.1", ports=[1, 22, 8000, 8001, 65535]),
+                       rule("phone", "192.0.2.2", ports=[8002, 8003]),
+                       rule("phone", network="udp", ports=[53])]
+        model = build_topology({"nodes": [node("desk", access_mode="restricted", permissions=permissions), node("phone")]})
+        edge = relation(model, "awg:phone")
+        self.assertEqual(edge["forward"]["status"], "partial")
+        self.assertEqual(edge["forward"]["scopes"], ["TCP · 1, 22, 8000-8003, 65535", "UDP · 53"])
+        self.assertEqual(edge["relation"], "mutual")
+        self.assertIn("范围限制", edge["label"])
+
+    def test_full_rule_supersedes_partial_scopes(self):
+        permissions = [rule("phone", ports=[22]), rule("phone", network="all", ports=[])]
+        edge = relation(build_topology({"nodes": [node("desk", access_mode="restricted", permissions=permissions), node("phone")]}), "awg:phone")
+        self.assertEqual(edge["forward"]["status"], "allowed")
+        self.assertEqual(edge["forward"]["scopes"], ["全部协议 · 全部端口"])
+
+    def test_awg_all_cidr_is_checked_and_unknown_hub_is_not_guessed(self):
+        overview = {"nodes": [node("desk", access_mode="restricted", permissions=[rule("all", "10.20.0.0/24")]), node("phone")]}
+        model = build_topology(overview)
+        self.assertEqual(relation(model, "awg:phone")["forward"]["status"], "partial")
+        hub = relation(model, "hub")
+        self.assertEqual(hub["forward"]["status"], "unknown")
+        self.assertIn("中心节点", hub["forward"]["summary"])
+        overview["nodes"][1]["address"] = "10.21.0.11"
+        self.assertEqual(relation(build_topology(overview), "awg:phone")["forward"]["status"], "denied")
+
+    def test_vless_all_uses_unavailable_current_cidr_not_saved_cidr(self):
+        for saved_cidr in ("10.20.0.0/24", "192.0.2.0/24"):
+            with self.subTest(cidr=saved_cidr):
+                model = build_topology({"nodes": [node("phone", "vless", permissions=[rule("all", saved_cidr, "all", [])]), node("desk")]})
+                result = relation(model, "awg:desk")["forward"]
+                self.assertEqual(result["status"], "unknown")
+                self.assertIn("实际网段", result["summary"])
+                self.assertEqual(result["scopes"], ["全部协议 · 全部端口"])
+                self.assertEqual(relation(model, "hub")["forward"]["status"], "unknown")
+
+    def test_verified_vless_all_restores_eight_outgoing_links_and_covers_hub(self):
+        overview = {"topology_context": {"hub_address": "10.77.0.1", "vless_networks": {"phone": "10.77.0.0/24"}},
+                    "nodes": [node("phone", "vless", permissions=[
+                        rule("all", "192.0.2.0/24", "all", []), rule("vps", "10.77.0.1", ports=[22, 9080]),
+                    ]), *[node(f"device-{n}", address=f"10.77.0.{n+10}") for n in range(7)],
+                              node("other-phone", "vless")]}
+        original = copy.deepcopy(overview)
+        model = build_topology(overview, "vless:phone")
+        edges = [edge for edge in model["links"] if edge["source"] == "vless:phone"]
+        self.assertEqual(len(edges), 8)
+        self.assertEqual({edge["target"] for edge in edges}, {"hub", *[f"awg:device-{n}" for n in range(7)]})
+        self.assertTrue(all(edge["status"] == "allowed" and edge["scopes"] == ["全部协议 · 全部端口"] for edge in edges))
+        self.assertFalse(any(edge["target"] == "vless:phone" for edge in model["links"]))
+        self.assertEqual(relation(model, "hub")["node"]["address"], "10.77.0.1")
+        self.assertEqual(model["links"], build_topology(overview, "hub")["links"])
+        self.assertEqual(overview, original)
+
+    def test_verified_network_is_per_client_and_checks_membership_and_state(self):
+        context = {"hub_address": "10.77.0.1", "vless_networks": {"phone": "10.77.0.0/24"}}
+        permissions = [rule("all", "10.88.0.0/24", "tcp", [8000, 8001, 8002])]
+        nodes = [node("phone", "vless", permissions=permissions), node("unverified", "vless", permissions=permissions),
+                 node("inside", address="10.77.0.10"), node("outside", address="10.88.0.10"),
+                 node("disabled", address="10.77.0.11", state="已禁用"),
+                 node("pending", address="10.77.0.12", state="等待首次握手")]
+        model = build_topology({"topology_context": context, "nodes": nodes}, "vless:phone")
+        self.assertEqual(relation(model, "awg:inside")["forward"]["scopes"], ["TCP · 8000-8002"])
+        self.assertEqual(relation(model, "awg:outside")["forward"]["status"], "denied")
+        self.assertEqual(relation(model, "awg:disabled")["forward"]["status"], "inactive")
+        self.assertEqual(relation(model, "awg:pending")["forward"]["status"], "unknown")
+        self.assertFalse(any(edge["source"] == "vless:unverified" for edge in model["links"]))
+
+    def test_hub_address_confirms_saved_ip_not_target_name_and_merges_protocols(self):
+        overview = {"topology_context": {"hub_address": "10.77.0.1", "vless_networks": {}},
+                    "nodes": [node("phone", "vless", permissions=[
+                        rule("vps", "10.77.0.1", ports=[22, 9080]),
+                        rule("vps", "10.77.0.1", "udp", [53, 123]),
+                    ])]}
+        model = build_topology(overview)
+        access = relation(model, "hub")["forward"]
+        self.assertEqual(access["status"], "partial")
+        self.assertEqual(access["scopes"], ["TCP · 22, 9080", "UDP · 53, 123"])
+        overview["topology_context"]["hub_address"] = "10.88.0.1"
+        self.assertEqual(relation(build_topology(overview), "hub")["forward"]["status"], "denied")
+
+    def test_invalid_context_cannot_inject_addresses_networks_or_credentials(self):
+        for context in (None, [], {}, {"hub_address": "secret", "vless_networks": {"phone": "10.20.0.0/24"}},
+                        {"hub_address": "10.20.0.1", "vless_networks": {"phone": "secret"}},
+                        {"hub_address": "10.20.0.1", "vless_networks": {}, "private_key": "secret"}):
+            with self.subTest(context=context):
+                model = build_topology({"topology_context": context, "nodes": [
+                    node("phone", "vless", permissions=[rule("all", "10.20.0.0/24", "all", [])]), node("desk")]})
+                self.assertEqual(relation(model, "hub")["node"]["address"], "")
+                self.assertFalse(any(edge["source"] == "vless:phone" for edge in model["links"]))
+                self.assertNotIn("secret", json.dumps(model))
+
+    def test_awg_all_rule_can_match_known_hub_but_not_another_subnet(self):
+        overview = {"topology_context": {"hub_address": "10.77.0.1", "vless_networks": {}},
+                    "nodes": [node("desk", access_mode="restricted", permissions=[rule("all", "10.77.0.0/24")])]}
+        self.assertEqual(relation(build_topology(overview), "hub")["forward"]["status"], "partial")
+        overview["topology_context"]["hub_address"] = "10.88.0.1"
+        self.assertEqual(relation(build_topology(overview), "hub")["forward"]["status"], "denied")
+
+    def test_vless_explicit_rule_can_confirm_scope_alongside_unknown_all(self):
+        model = build_topology({"nodes": [node("phone", "vless", permissions=[rule("all", "10.20.0.0/24", "all", []), rule("desk")]), node("desk")]})
+        result = relation(model, "awg:desk")["forward"]
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["scopes"], ["TCP · 22"])
+        self.assertTrue(result["warnings"])
+
+    def test_awg_explicit_vps_is_configured_but_vless_vps_requires_hub_ip(self):
+        for kind, expected in (("awg", "partial"), ("vless", "unknown")):
+            model = build_topology({"nodes": [node("desk", kind, access_mode="restricted", permissions=[rule("vps", "10.20.0.1")])]})
+            self.assertEqual(relation(model, "hub")["forward"]["status"], expected)
+        model = build_topology({"nodes": [node("desk")]}, "hub")
+        self.assertEqual(relation(model, "awg:desk")["forward"]["status"], "unknown")
+        self.assertEqual(model["selected"]["address"], "")
+
+    def test_vless_never_becomes_an_inbound_target(self):
+        model = build_topology({"nodes": [node("desk"), node("phone", "vless"), node("tablet", "vless")]}, "vless:phone")
+        self.assertEqual(relation(model, "awg:desk")["reverse"]["status"], "not_applicable")
+        self.assertEqual(relation(model, "vless:tablet")["relation"], "not_applicable")
+
+    def test_vless_stale_name_does_not_authorize_wrong_ip_but_ip_still_routes(self):
+        overview = {"nodes": [node("phone", "vless", permissions=[rule("desk", "10.20.0.99", "all", [])]), node("desk"), node("new", address="10.20.0.99")]}
+        model = build_topology(overview)
+        stale = relation(model, "awg:desk")["forward"]
+        self.assertEqual(stale["status"], "denied")
+        self.assertTrue(stale["warnings"])
+        actual = relation(model, "awg:new")["forward"]
+        self.assertEqual(actual["status"], "allowed")
+        self.assertTrue(actual["warnings"])
+
+    def test_dangling_awg_target_is_ignored_but_vless_saved_ip_is_used(self):
+        for kind, expected in (("awg", "denied"), ("vless", "partial")):
+            model = build_topology({"nodes": [node("phone", kind, access_mode="restricted", permissions=[rule("gone")]), node("desk")]})
+            result = relation(model, "awg:desk")["forward"]
+            self.assertEqual(result["status"], expected)
+            self.assertTrue(result["warnings"])
+
+    def test_disabled_and_pending_nodes_preserve_scope_without_claiming_access(self):
+        for state, expected in (("已禁用", "inactive"), ("等待首次握手", "unknown"), ("unexpected", "unknown")):
+            for disabled_source in (False, True):
+                with self.subTest(state=state, source=disabled_source):
+                    nodes = [node("desk"), node("phone")]
+                    nodes[0 if disabled_source else 1]["state"] = state
+                    model = build_topology({"nodes": nodes})
+                    edge = relation(model, "awg:phone")
+                    self.assertEqual(edge["forward"]["status"], expected)
+                    self.assertEqual(edge["reverse"]["status"], expected)
+                    self.assertEqual(edge["forward"]["scopes"], ["全部协议 · 全部端口"])
+                    self.assertTrue(all(item["online_label"] == "未检测" for item in model["nodes"]))
+
+    def test_invalid_policy_fields_are_unknown_and_never_imply_allow(self):
+        malformed = [None, {}, rule(ports=[True]), rule(ports=[0]), rule(ports=[65536]), rule(ports=["22"]),
+                     rule(ports=[]), rule(ip="invalid"), rule(network="icmp"), rule(network=[]), rule(target="<script>")]
+        for permission in malformed:
+            with self.subTest(permission=permission):
+                model = build_topology({"nodes": [node("desk", access_mode="restricted", permissions=[permission]), node("phone")]})
+                self.assertEqual(relation(model, "awg:phone")["forward"]["status"], "unknown")
+        for values in ({"access_mode": None}, {"access_mode": "restricted", "permissions": None}):
+            model = build_topology({"nodes": [node("desk", **values), node("phone")]})
+            self.assertEqual(relation(model, "awg:phone")["forward"]["status"], "unknown")
+
+    def test_invalid_addresses_and_duplicate_ids_do_not_fabricate_nodes(self):
+        model = build_topology({"nodes": [node("desk"), node("desk", address="192.0.2.5"), node("phone", address="private-not-an-ip")]})
+        self.assertEqual(model["summary"]["nodes"], 2)
+        self.assertTrue(model["warnings"])
+        self.assertEqual(relation(model, "awg:phone")["forward"]["status"], "unknown")
+        for address in (None, 10, True, [], "not-an-address"):
+            with self.subTest(address=address):
+                model = build_topology({"nodes": [node("desk", address=address), node("phone")]})
+                self.assertEqual(relation(model, "awg:phone")["forward"]["status"], "unknown")
+                self.assertEqual(relation(model, "awg:phone")["reverse"]["status"], "unknown")
+                self.assertEqual(relation(model, "hub")["forward"]["status"], "unknown")
+
+    def test_projection_excludes_credentials_and_does_not_mutate_input(self):
+        secret = "do-not-project-this-credential"
+        overview = {"nodes": [node("desk", protected=True, private_key=secret, uuid=secret,
+                                  domains=[secret], exit_names=[secret], kind_label=secret,
+                                  public_key_fingerprint=secret, detail=secret)],
+                    "pending_access": True, "pending_vless": True, "unknown": secret}
+        original = copy.deepcopy(overview)
+        model = build_topology(overview)
+        encoded = json.dumps(model)
+        self.assertNotIn(secret, encoded)
+        self.assertEqual(overview, original)
+        self.assertEqual(len(model["warnings"]), 2)
+        self.assertEqual(set(model["nodes"][1]), {"id", "name", "kind", "kind_label", "address", "state", "availability", "protected", "online_label", "exit_ids"})
+
+    def test_links_include_every_confirmed_direction_with_compact_protocol_ranges(self):
+        overview = {"nodes": [
+            node("desk"),
+            node("nas", address="10.20.0.20", access_mode="restricted", permissions=[
+                rule("desk", network="udp", ports=[53]), rule("vps", "10.20.0.1", ports=[8080]),
+            ]),
+            node("phone", "vless", permissions=[
+                rule("desk", ports=[22, 8000, 8001, 8002]), rule("desk", network="udp", ports=[53]),
+            ]),
+            node("sensor", address="10.20.0.30", access_mode="restricted", permissions=[rule("desk", ports=[443])]),
+        ]}
+        model = build_topology(overview)
+        links = {(link["source"], link["target"]): link for link in model["links"]}
+        self.assertEqual(set(links), {
+            ("awg:desk", "hub"), ("awg:desk", "awg:nas"), ("awg:desk", "awg:sensor"),
+            ("awg:nas", "hub"), ("awg:nas", "awg:desk"),
+            ("vless:phone", "awg:desk"), ("awg:sensor", "awg:desk"),
+        })
+        self.assertEqual(links["vless:phone", "awg:desk"], {
+            "source": "vless:phone", "target": "awg:desk", "status": "partial",
+            "label": "TCP · 22, 8000-8002；UDP · 53", "scopes": ["TCP · 22, 8000-8002", "UDP · 53"],
+        })
+        self.assertEqual(links["awg:desk", "awg:nas"]["status"], "allowed")
+        self.assertEqual(links["awg:nas", "awg:desk"]["label"], "UDP · 53")
+        valid_ids = {node["id"] for node in model["nodes"]}
+        self.assertEqual(len(links), len(model["links"]))
+        for link in model["links"]:
+            self.assertEqual(set(link), {"source", "target", "status", "label", "scopes"})
+            self.assertIn(link["source"], valid_ids)
+            self.assertIn(link["target"], valid_ids)
+            self.assertNotEqual(link["source"], link["target"])
+            self.assertIn(link["status"], {"allowed", "partial"})
+
+    def test_unknown_inactive_and_inapplicable_pairs_never_become_links(self):
+        overview = {"nodes": [
+            node("desk"), node("disabled", state="已禁用"),
+            node("pending", state="等待首次握手"), node("unknown", state=None),
+            node("bad-address", address="invalid"),
+            node("vless-all", "vless", permissions=[rule("all", "10.20.0.0/24", "all", [])]),
+            node("vless-vps", "vless", permissions=[rule("vps", "10.20.0.1", "all", [])]),
+            node("stale-ip", "vless", permissions=[rule("desk", "192.0.2.99", "all", [])]),
+        ]}
+        model = build_topology(overview)
+        self.assertEqual(model["links"], [{
+            "source": "awg:desk", "target": "hub", "status": "allowed",
+            "label": "全部协议 · 全部端口", "scopes": ["全部协议 · 全部端口"],
+        }])
+
+    def test_links_remain_identical_when_selection_changes(self):
+        overview = {"nodes": [
+            node("desk"), node("nas", address="10.20.0.20"),
+            node("phone", "vless", permissions=[rule("desk")]),
+        ]}
+        original = copy.deepcopy(overview)
+        models = [build_topology(overview, identifier) for identifier in ("hub", "awg:desk", "awg:nas", "vless:phone")]
+        for model in models:
+            self.assertEqual(model["links"], models[0]["links"])
+            links = {(edge["source"], edge["target"]): edge for edge in model["links"]}
+            for edge in model["relations"]:
+                for direction, pair in (
+                    ("forward", (model["selected_id"], edge["node"]["id"])),
+                    ("reverse", (edge["node"]["id"], model["selected_id"])),
+                ):
+                    access = edge[direction]
+                    if access["status"] in {"allowed", "partial"}:
+                        self.assertEqual(links[pair]["status"], access["status"])
+                        self.assertEqual(links[pair]["scopes"], access["scopes"])
+                    else:
+                        self.assertNotIn(pair, links)
+        self.assertEqual(overview, original)
+
+    def test_all_node_links_have_bounded_work_and_compact_payload(self):
+        import dashboard.topology as topology
+        nodes = [node(f"node-{i}", address=f"10.20.0.{i + 2}") for i in range(200)]
+        with patch.object(topology, "_access", wraps=topology._access) as calculate:
+            model = build_topology({"nodes": nodes})
+        self.assertEqual(len(model["relations"]), 200)
+        self.assertEqual(len(model["links"]), 40_000)
+        pairs = [(call.args[0]["id"], call.args[1]["id"]) for call in calculate.call_args_list]
+        self.assertEqual(len(pairs), len(set(pairs)), "selected pairs must be reused")
+        self.assertLessEqual(calculate.call_count, len(model["nodes"]) * (len(model["nodes"]) - 1))
+        encoded = json.dumps(model, ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertLess(len(encoded), 8_000_000, "full links must not repeat detailed node or access objects")
+        self.assertEqual(model["summary"], {"nodes": 200, "awg": 200, "vless": 0, "enabled": 200, "disabled": 0, "pending": 0})
+
+
+class TopologyExitProjectionTests(unittest.TestCase):
+    FIRST = "012345abcdef"
+    SECOND = "abcdef012345"
+    UNKNOWN = "ffffffffffff"
+
+    def catalog(self):
+        return [{"id": self.FIRST, "name": "  Gateway A  ", "default": True},
+                {"id": self.SECOND, "name": "出口 B", "default": False}]
+
+    def project(self, nodes=None, catalog=None, selected_id=""):
+        return build_topology({"nodes": nodes if nodes is not None else [node("desk")],
+                               "exit_options": self.catalog() if catalog is None else catalog}, selected_id)
+
+    def by_id(self, model):
+        return {item["id"]: item for item in model["nodes"]}
+
+    def test_safe_catalog_and_explicit_multi_selection_are_projected_exactly(self):
+        model = self.project([
+            node("desk", exit_ids=[self.SECOND, self.FIRST]),
+            node("phone", "vless", exit_ids=[self.FIRST]),
+        ], selected_id="vless:phone")
+        self.assertEqual(model["exits"], [{"id": self.FIRST, "name": "Gateway A"},
+                                          {"id": self.SECOND, "name": "出口 B"}])
+        self.assertTrue(all(set(item) == {"id", "name"} for item in model["exits"]))
+        nodes = self.by_id(model)
+        self.assertEqual(nodes["hub"]["exit_ids"], [])
+        self.assertEqual(nodes["awg:desk"]["exit_ids"], [self.SECOND, self.FIRST])
+        self.assertEqual(nodes["vless:phone"]["exit_ids"], [self.FIRST])
+        self.assertEqual(model["selected"]["exit_ids"], [self.FIRST])
+        self.assertEqual(relation(model, "awg:desk")["node"]["exit_ids"], [self.SECOND, self.FIRST])
+        self.assertEqual(model["warnings"], [])
+        self.assertEqual(set(model), {"nodes", "selected_id", "selected", "relations", "links",
+                                      "summary", "warnings", "note", "exits"})
+
+    def test_disabled_and_pending_nodes_keep_configuration_without_new_access(self):
+        for kind in ("awg", "vless"):
+            for state in ("已禁用", "等待首次握手"):
+                with self.subTest(kind=kind, state=state):
+                    model = self.project([node("desk"), node("paused", kind, state=state,
+                                                             exit_ids=[self.SECOND, self.FIRST])])
+                    identifier = f"{kind}:paused"
+                    self.assertEqual(self.by_id(model)[identifier]["exit_ids"], [self.SECOND, self.FIRST])
+                    self.assertFalse(any(identifier in (edge["source"], edge["target"]) for edge in model["links"]))
+
+    def test_missing_or_empty_associations_do_not_infer_a_default_exit(self):
+        for fields in ({}, {"exit_ids": []}):
+            with self.subTest(fields=fields):
+                model = self.project([node("desk", **fields), node("phone", "vless", **fields)])
+                self.assertTrue(model["exits"], "A configured default is present to catch accidental inference")
+                self.assertTrue(all(item["exit_ids"] == [] for item in model["nodes"]))
+                self.assertEqual(model["warnings"], [])
+        for overview in ({}, {"nodes": [node("desk")]}, {"nodes": [node("desk")], "exit_options": []}):
+            model = build_topology(overview)
+            self.assertEqual(model["exits"], [])
+            self.assertTrue(all(item["exit_ids"] == [] for item in model["nodes"]))
+            self.assertEqual(model["warnings"], [])
+
+    def test_each_invalid_node_association_rejects_the_whole_group(self):
+        malformed = [None, True, 12, {}, self.FIRST, (self.FIRST,),
+                     [self.FIRST, self.FIRST], [self.FIRST, self.UNKNOWN],
+                     [self.FIRST, "ABCDEF012345"], [self.FIRST, "short"],
+                     [self.FIRST, "012345abcdeg"], [self.FIRST, " 012345abcdef"],
+                     [self.FIRST, True], [self.FIRST, 123], [self.FIRST, None],
+                     [self.FIRST, {}], [self.FIRST, []],
+                     [self.FIRST, "do-not-project-raw-exit-id"]]
+        generic_warnings = None
+        for kind in ("awg", "vless"):
+            for value in malformed:
+                with self.subTest(kind=kind, value=value):
+                    model = self.project([node("desk", kind, exit_ids=value)])
+                    self.assertEqual(self.by_id(model)[f"{kind}:desk"]["exit_ids"], [])
+                    self.assertTrue(model["warnings"])
+                    generic_warnings = model["warnings"] if generic_warnings is None else generic_warnings
+                    self.assertEqual(model["warnings"], generic_warnings, "Invalid values use the same generic warning")
+                    encoded = json.dumps(model, ensure_ascii=False)
+                    self.assertNotIn(self.UNKNOWN, encoded)
+                    self.assertNotIn("ABCDEF012345", encoded)
+                    self.assertNotIn("do-not-project-raw-exit-id", encoded)
+                    self.assertEqual(model["exits"], [{"id": self.FIRST, "name": "Gateway A"},
+                                                      {"id": self.SECOND, "name": "出口 B"}])
+
+    def test_catalog_and_association_size_boundaries(self):
+        catalog = [{"id": f"{index:012x}", "name": f"Gateway {index}"} for index in range(17)]
+        ids = [item["id"] for item in catalog]
+        accepted = self.project([node("desk", exit_ids=ids[:16])], catalog[:16])
+        self.assertEqual(accepted["exits"], catalog[:16])
+        self.assertEqual(self.by_id(accepted)["awg:desk"]["exit_ids"], ids[:16])
+        self.assertEqual(accepted["warnings"], [])
+        rejected = self.project([node("desk", exit_ids=ids)], catalog[:16])
+        self.assertEqual(self.by_id(rejected)["awg:desk"]["exit_ids"], [])
+        self.assertTrue(rejected["warnings"])
+        oversized = self.project([node("desk", exit_ids=[ids[0]])], catalog)
+        self.assertEqual(oversized["exits"], [])
+        self.assertEqual(self.by_id(oversized)["awg:desk"]["exit_ids"], [])
+        self.assertTrue(oversized["warnings"])
+
+    def test_invalid_catalog_types_never_echo_raw_data(self):
+        for value in (None, True, 16, {}, "do-not-project-raw-catalog", tuple(self.catalog())):
+            with self.subTest(value=value):
+                model = build_topology({"nodes": [node("desk", exit_ids=[self.FIRST])], "exit_options": value})
+                self.assertEqual(model["exits"], [])
+                self.assertEqual(self.by_id(model)["awg:desk"]["exit_ids"], [])
+                self.assertTrue(model["warnings"])
+                self.assertNotIn("do-not-project-raw-catalog", json.dumps(model))
+
+    def test_bad_catalog_records_are_skipped_without_poisoning_safe_entries(self):
+        invalid = [None, True, 12, [], {},
+                   {"id": self.SECOND}, {"name": "do-not-project-invalid-catalog-record"},
+                   {"id": self.SECOND.upper(), "name": "do-not-project-invalid-catalog-record"},
+                   {"id": "short", "name": "do-not-project-invalid-catalog-record"},
+                   {"id": "012345abcdeg", "name": "do-not-project-invalid-catalog-record"},
+                   {"id": 123, "name": "do-not-project-invalid-catalog-record"},
+                   {"id": [], "name": "do-not-project-invalid-catalog-record"},
+                   {"id": self.SECOND, "name": None}, {"id": self.SECOND, "name": 1},
+                   {"id": self.SECOND, "name": []}, {"id": self.SECOND, "name": ""},
+                   {"id": self.SECOND, "name": " \t\n "},
+                   {"id": self.SECOND, "name": "x" * 41},
+                   *[{"id": self.SECOND, "name": f"do-not-project{character}catalog"}
+                     for character in ("\n", "\r", "\t", "\0", "\x1b", "\x7f", "\u200b")]]
+        for record in invalid:
+            with self.subTest(record=record):
+                model = self.project([node("desk", exit_ids=[self.FIRST])], [self.catalog()[0], record])
+                self.assertEqual(model["exits"], [{"id": self.FIRST, "name": "Gateway A"}])
+                self.assertEqual(self.by_id(model)["awg:desk"]["exit_ids"], [self.FIRST])
+                self.assertTrue(model["warnings"])
+                self.assertNotIn("do-not-project", json.dumps(model))
+
+    def test_printable_names_use_trimmed_one_to_forty_character_bounds(self):
+        for name, expected in (("A", "A"), ("x" * 40, "x" * 40), ("  海外出口  ", "海外出口"),
+                               ("\tGateway\n", "Gateway"), ("  " + "月" * 40 + "  ", "月" * 40)):
+            with self.subTest(name=name):
+                model = self.project(catalog=[{"id": self.FIRST, "name": name}])
+                self.assertEqual(model["exits"], [{"id": self.FIRST, "name": expected}])
+                self.assertEqual(model["warnings"], [])
+
+    def test_duplicate_catalog_ids_are_all_excluded_even_if_one_record_is_invalid(self):
+        for duplicate in ({"id": self.FIRST, "name": "Different display name"},
+                          {"id": self.FIRST, "name": "Gateway A"},
+                          {"id": self.FIRST, "name": "bad\nname"}):
+            with self.subTest(duplicate=duplicate):
+                model = self.project([node("desk", exit_ids=[self.FIRST, self.SECOND]),
+                                      node("phone", "vless", exit_ids=[self.SECOND])],
+                                     [*self.catalog(), duplicate])
+                self.assertEqual(model["exits"], [{"id": self.SECOND, "name": "出口 B"}])
+                self.assertEqual(self.by_id(model)["awg:desk"]["exit_ids"], [])
+                self.assertEqual(self.by_id(model)["vless:phone"]["exit_ids"], [self.SECOND])
+                self.assertTrue(model["warnings"])
+                self.assertNotIn(self.FIRST, json.dumps(model))
+                self.assertNotIn("Different display name", json.dumps(model))
+        # Labels are presentation, not identity: distinct IDs may share a name.
+        model = self.project(catalog=[{"id": self.FIRST, "name": "Same"},
+                                      {"id": self.SECOND, "name": "Same"}])
+        self.assertEqual(len(model["exits"]), 2)
+        self.assertEqual(model["warnings"], [])
+
+    def test_exit_projection_excludes_credentials_and_does_not_mutate_or_alias_input(self):
+        secret = "do-not-project-this-exit-credential"
+        catalog = [{"id": self.FIRST, "name": "Gateway A", "default": True,
+                    "password": secret, "username": secret, "server": secret, "port": 8000,
+                    "proxy": {"uri": secret}, "subscription_url": secret}]
+        overview = {"exit_options": catalog, "exits": [{"id": self.SECOND, "name": secret}],
+                    "default_exit_id": self.SECOND, "exit_ids": [self.SECOND],
+                    "nodes": [node("desk", exit_ids=[self.FIRST], exit_names=[secret],
+                                   private_key=secret, credentials={"token": secret})]}
+        original = copy.deepcopy(overview)
+        model = build_topology(overview)
+        self.assertEqual(model["exits"], [{"id": self.FIRST, "name": "Gateway A"}])
+        self.assertEqual(self.by_id(model)["hub"]["exit_ids"], [])
+        self.assertNotIn(secret, json.dumps(model))
+        self.assertEqual(overview, original)
+        model["exits"][0]["name"] = "Changed output only"
+        self.by_id(model)["awg:desk"]["exit_ids"].append(self.SECOND)
+        self.assertEqual(overview, original, "Projected lists and records never alias caller-owned data")
+
+    def test_exit_associations_do_not_change_permissions_links_or_selection(self):
+        original = {"topology_context": {"hub_address": "10.20.0.1", "vless_networks": {}},
+                    "nodes": [node("desk", protected=True),
+                              node("nas", address="10.20.0.20", access_mode="restricted", permissions=[rule("desk")]),
+                              node("phone", "vless", permissions=[rule("nas", "10.20.0.20")])],
+                    "exit_options": self.catalog()}
+        for assignments in ([[], [], []], [[self.FIRST], [self.SECOND], [self.FIRST, self.SECOND]],
+                            [[self.UNKNOWN], [self.FIRST, self.FIRST], "do-not-project-invalid-selection"]):
+            changed = copy.deepcopy(original)
+            for raw, exits in zip(changed["nodes"], assignments):
+                raw["exit_ids"] = exits
+            frozen = copy.deepcopy(changed)
+            for selected in ("", "hub", "awg:desk", "awg:nas", "vless:phone"):
+                with self.subTest(assignments=assignments, selected=selected):
+                    baseline = build_topology(original, selected)
+                    model = build_topology(changed, selected)
+                    self.assertEqual(model["links"], baseline["links"])
+                    self.assertEqual(model["summary"], baseline["summary"])
+                    self.assertEqual(model["selected_id"], baseline["selected_id"])
+                    for actual, expected in zip(model["relations"], baseline["relations"]):
+                        self.assertEqual(actual["node"]["id"], expected["node"]["id"])
+                        for field in ("forward", "reverse", "relation", "label"):
+                            self.assertEqual(actual[field], expected[field])
+            self.assertEqual(changed, frozen)
+
+    def test_vless_address_is_always_blank_but_awg_and_hub_keep_valid_ips(self):
+        for address in ("10.20.0.88", "2001:db8::88", "do-not-project-address", None, [], True):
+            with self.subTest(address=address):
+                model = build_topology({"topology_context": {"hub_address": "10.20.0.1", "vless_networks": {}},
+                                        "exit_options": self.catalog(),
+                                        "nodes": [node("desk", address="2001:db8::10", exit_ids=[self.FIRST]),
+                                                  node("phone", "vless", address=address, exit_ids=[self.SECOND])]})
+                nodes = self.by_id(model)
+                self.assertEqual(nodes["vless:phone"]["address"], "")
+                self.assertEqual(nodes["awg:desk"]["address"], "2001:db8::10")
+                self.assertEqual(nodes["hub"]["address"], "10.20.0.1")
+                self.assertNotIn("do-not-project-address", json.dumps(model))

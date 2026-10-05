@@ -1,0 +1,24 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hans" data-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#101d27">
+    <title>{% block title %}moonsage{% endblock %}</title>
+    <link rel="icon" href="{% static 'moonsage/mark.svg' %}" type="image/svg+xml">
+    <script src="{% static 'theme.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'app.css' %}">
+    <link rel="stylesheet" href="{% static 'moonsage/theme.css' %}">
+    <link rel="stylesheet" href="{% static 'console.css' %}">
+    {% block extra_head %}{% endblock %}
+    <script src="{% static 'app.js' %}" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    {% block body %}{% endblock %}
+    <div class="interaction-feedback" data-interaction-feedback role="status" aria-live="polite" hidden></div>
+    <a class="guide-return-bar" data-guide-return hidden href="{% url 'node-deployment-guide' %}">返回部署步骤</a>
+  </body>
+</html>

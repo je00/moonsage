@@ -1,0 +1,63 @@
+{% load static %}
+<!doctype html>
+<html lang="{% if landing_language == 'en' %}en{% else %}zh-Hans{% endif %}" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#101d27">
+  <meta name="description" content="{{ copy.description }}">
+  <title>{{ copy.title }}</title>
+  <link rel="icon" href="{% static 'moonsage/mark.svg' %}" type="image/svg+xml">
+  <script src="{% static 'theme.js' %}"></script>
+  <link rel="stylesheet" href="{% static 'moonsage/theme.css' %}">
+  <link rel="stylesheet" href="{% static 'moonsage/home.css' %}">
+  <noscript><style>.moon-theme-picker { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">{{ copy.skip }}</a>
+  <main class="moon-home" id="main-content" tabindex="-1">
+    <header class="moon-header">
+      <a class="moon-brand" href="{% url 'home' %}" aria-label="{{ copy.home }}">
+        {% include "dashboard/_moon_mark.html" %}
+        <h1>moonsage</h1>
+      </a>
+      <div class="moon-header-actions">
+        <nav class="moon-language" aria-label="{{ copy.language }}">
+          <a href="{% url 'home' %}?lang=zh" lang="zh-Hans" hreflang="zh-Hans"{% if landing_language == 'zh' %} aria-current="true"{% endif %}>中文</a>
+          <span aria-hidden="true">/</span>
+          <a href="{% url 'home' %}?lang=en" lang="en" hreflang="en"{% if landing_language == 'en' %} aria-current="true"{% endif %}>English</a>
+        </nav>
+      </div>
+    </header>
+    <section class="moon-entry" aria-label="{{ copy.console }}">
+      <div class="moon-art">{% include "dashboard/_moon_scene.html" %}</div>
+      <p class="visually-hidden">{{ copy.description }}</p>
+      <div class="moon-entry-actions">
+        <a class="moon-console" href="{% url 'dashboard' %}">{{ copy.enter }} <span aria-hidden="true">→</span></a>
+        <a class="moon-start" href="{% url 'deployment-wizard' %}">{{ copy.start }} <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+    <nav class="moon-links" aria-label="{{ copy.navigation }}">
+      <a href="{% url 'network-nodes' %}">
+        {% include "dashboard/_icon.html" with icon="nodes" %}
+        <span>{{ copy.network }}</span>
+        <span class="moon-link-arrow" aria-hidden="true">↗</span>
+      </a>
+      <a href="{% url 'network-topology' %}">
+        {% include "dashboard/_icon.html" with icon="security" %}
+        <span>{{ copy.permissions }}</span>
+        <span class="moon-link-arrow" aria-hidden="true">↗</span>
+      </a>
+      <a href="{% url 'node-deployment-guide' %}">
+        {% include "dashboard/_icon.html" with icon="audit" %}
+        <span>{{ copy.guide }}</span>
+        <span class="moon-link-arrow" aria-hidden="true">↗</span>
+      </a>
+    </nav>
+    <footer class="moon-footer">
+      {% include "dashboard/_theme_picker.html" with theme_picker_class="moon-theme-picker" theme_label=copy.theme theme_dark=copy.theme_dark theme_light=copy.theme_light %}
+    </footer>
+  </main>
+</body>
+</html>

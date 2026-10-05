@@ -1,0 +1,67 @@
+<svg class="moon-illustration" data-moon-scene viewBox="0 0 640 310" width="640" height="310" fill="none" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="home-scene-sky" x1="320" y1="0" x2="320" y2="188" gradientUnits="userSpaceOnUse">
+      <stop stop-color="var(--scene-sky)"/>
+      <stop offset="1" stop-color="var(--scene-horizon)"/>
+    </linearGradient>
+    <linearGradient id="home-scene-sea" x1="320" y1="184" x2="320" y2="310" gradientUnits="userSpaceOnUse">
+      <stop stop-color="var(--scene-sea)"/>
+      <stop offset="1" stop-color="var(--scene-deep)"/>
+    </linearGradient>
+    <radialGradient id="home-lunar-shade" cx=".32" cy=".25" r=".81">
+      <stop stop-color="var(--lunar-light)"/>
+      <stop offset=".56" stop-color="var(--lunar-surface)"/>
+      <stop offset="1" stop-color="var(--lunar-shadow)"/>
+    </radialGradient>
+    <radialGradient id="home-water-reflection" cx="320" cy="184" r="130" gradientUnits="userSpaceOnUse" gradientTransform="translate(320 184) scale(.65 1) translate(-320 -184)">
+      <stop stop-color="var(--lunar-light)" stop-opacity=".3"/>
+      <stop offset=".35" stop-color="var(--lunar-light)" stop-opacity=".12"/>
+      <stop offset="1" stop-color="var(--lunar-light)" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="home-scene-bounds"><rect width="640" height="310" rx="18"/></clipPath>
+  </defs>
+  <g clip-path="url(#home-scene-bounds)">
+    <rect width="640" height="310" fill="url(#home-scene-sky)"/>
+    <path d="M0 184C159 181 451 187 640 183V310H0Z" fill="url(#home-scene-sea)"/>
+    <path d="M0 184C159 181 451 187 640 183V310H0Z" fill="url(#home-water-reflection)"/>
+    <path class="moon-scene-water-shadow" fill="var(--lunar-terrain)" opacity="var(--scene-water-shade-opacity)" d="M0 286C123 267 210 291 281 288S451 265 529 276 607 289 640 282V310H0Z"/>
+    <!-- The same deterministic surface as topology_moon.js at its default view. -->
+    <g transform="translate(262 54) scale(1.16)">
+      <circle data-home-moon class="moon-scene-limb" cx="50" cy="50" r="49" fill="url(#home-lunar-shade)" stroke="var(--lunar-rim)" stroke-width="1.2"/>
+      <g class="moon-scene-maria" fill="var(--lunar-terrain)" opacity=".16">
+        <path data-lunar-feature="mare-0" d="M36.511 32.356 35.443 36.447 30.746 38.743 26.294 39.820 23.078 41.493 19.737 43.088 16.345 43.146 13.315 42.533 10.242 41.969 8.149 39.858 8.658 35.679 10.967 31.712 12.520 28.857 13.436 25.546 15.804 21.918 19.428 19.772 23.088 19.205 26.718 19.251 29.789 20.544 30.951 23.365 31.417 26.163 33.765 28.655Z"/>
+        <path data-lunar-feature="mare-1" d="M56.143 10.641 55.383 12.052 53.061 12.934 50.108 13.206 47.865 13.854 45.385 15.306 41.856 16.230 38.906 15.429 37.595 13.802 36.587 12.620 35.332 11.692 35.082 10.472 35.880 9.140 36.726 7.810 38.285 6.384 41.458 5.436 44.876 5.583 47.302 6.134 49.925 6.258 53.324 6.609 55.710 7.757 56.265 9.202Z"/>
+        <path data-lunar-feature="mare-2" d="M87.774 71.245 86.645 74.145 83.832 76.396 80.998 77.371 78.794 78.661 75.962 80.702 72.573 81.562 70.107 80.456 68.508 78.588 67.198 76.506 67.248 73.990 68.995 71.623 70.410 69.549 70.794 66.676 72.263 63.339 75.684 61.919 79.073 62.861 81.459 63.940 83.727 64.234 85.710 65.056 86.728 66.873 87.369 68.901Z"/>
+        <path data-lunar-feature="mare-3" d="M60.917 93.790 60.009 94.543 59.898 95.280 58.735 96.100 56.313 96.672 53.672 96.918 51.049 96.951 48.772 96.596 47.691 95.890 47.108 95.211 45.443 94.497 43.598 93.382 43.988 92.337 46.496 91.929 49.039 91.756 51.088 91.374 53.344 91.068 55.654 91.133 57.928 91.205 60.631 91.123 62.779 91.493 62.627 92.629Z"/>
+      </g>
+      <g class="moon-scene-crater" fill="none" stroke="var(--lunar-terrain)" stroke-width=".7" opacity=".22">
+        <path data-lunar-feature="crater-0" d="M11.515 52.447 11.388 53.547 10.951 54.353 10.322 54.648 9.669 54.353 9.167 53.547 8.951 52.447 9.078 51.346 9.514 50.540 10.143 50.245 10.796 50.540 11.298 51.346Z"/>
+        <path data-lunar-feature="crater-1" d="M33.568 10.742 33.004 11.225 32.246 11.579 31.497 11.709 30.959 11.579 30.775 11.225 30.994 10.742 31.559 10.259 32.317 9.905 33.066 9.775 33.604 9.905 33.788 10.259Z"/>
+        <path data-lunar-feature="crater-2" d="M55.598 9.352 55.402 10.007 54.633 10.487 53.497 10.662 52.299 10.487 51.359 10.007 50.929 9.352 51.125 8.698 51.894 8.218 53.030 8.043 54.228 8.218 55.168 8.698Z"/>
+        <path data-lunar-feature="crater-3" d="M92.397 55.862 92.172 56.786 91.746 57.462 91.233 57.710 90.772 57.462 90.484 56.786 90.449 55.862 90.674 54.938 91.100 54.261 91.613 54.013 92.075 54.261 92.362 54.938Z"/>
+        <path data-lunar-feature="crater-4" d="M62.440 94.078 61.846 94.451 61.017 94.725 60.176 94.825 59.547 94.725 59.299 94.451 59.499 94.078 60.092 93.704 60.921 93.431 61.763 93.331 62.392 93.431 62.640 93.704Z"/>
+      </g>
+    </g>
+    <g class="moon-scene-sky-node" fill="var(--lunar-light)" stroke="var(--scene-star-rim)" stroke-width="1.2">
+      <circle data-home-node="sky" cx="117" cy="92" r="3.4"/>
+      <circle data-home-node="sky" cx="234" cy="40" r="2.7"/>
+      <circle data-home-node="sky" cx="451" cy="71" r="3.8"/>
+      <circle data-home-node="sky" cx="529" cy="130" r="3"/>
+    </g>
+    <g class="moon-scene-ripple" fill="none" stroke="var(--scene-ripple)" stroke-width=".8" stroke-linecap="round" opacity="var(--scene-ripple-opacity)">
+      <path d="M126 222c12 2 29 2 42-1M410 211c9 1 23 2 38 0M244 275c15 2 33 2 49-1M504 261c15 2 33 1 43-1"/>
+    </g>
+    <g class="moon-scene-node-reflection" fill="var(--lunar-light)" opacity="var(--scene-node-reflection-opacity)">
+      <ellipse cx="147" cy="224" rx="4" ry="1.5"/>
+      <ellipse cx="430" cy="213" rx="3" ry="1"/>
+      <ellipse cx="270" cy="278" rx="5" ry="1.8"/>
+      <ellipse cx="526" cy="263" rx="3.5" ry="1.2"/>
+    </g>
+    <g class="moon-scene-sea-node" fill="var(--lunar-light)" stroke="var(--accent)" stroke-width="1.5">
+      <circle data-home-node="sea" cx="147" cy="215" r="5"/>
+      <circle data-home-node="sea" cx="430" cy="204" r="4.5"/>
+      <circle data-home-node="sea" cx="270" cy="267" r="6"/>
+      <circle data-home-node="sea" cx="526" cy="253" r="5.2"/>
+    </g>
+  </g>
+</svg>
