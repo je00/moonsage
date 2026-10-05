@@ -27,6 +27,7 @@ class TaskNavigationTests(SimpleTestCase):
             "network.subscriptions.sync": ("/network/nodes/", "内网节点"),
             "network.subscription.rotate": ("/network/nodes/", "内网节点"),
             "network.proxy.update": ("/network/proxy/", "代理资源"),
+            "network.subscription_rules.change": ("/network/subscription-rules/", "直连与 DNS"),
             "network.node.domains": ("/network/subscriptions/#host-records", "域名管理"),
             "network.address.domains": ("/network/subscriptions/#host-records", "域名管理"),
             "network.duckdns.configure": ("/network/subscriptions/#dynamic-dns", "域名管理"),
@@ -95,6 +96,12 @@ class TaskNavigationTests(SimpleTestCase):
             self.assertIsNone(task_navigation_context(None, session, TASK_ID)["task_origin"])
         self.assertIsNone(task_navigation_context(None, {}, TASK_ID)["task_origin"])
 
+    def test_existing_remembered_rules_destination_uses_new_page(self):
+        session = {"task_return_destinations": {TASK_ID: "subscription-rules"}}
+        self.assertEqual(task_navigation_context(None, session, TASK_ID)["task_origin"], {
+            "url": "/network/subscription-rules/", "label": "直连与 DNS",
+        })
+
     def test_templates_offer_origin_plus_audit_without_resubmission(self):
         request = RequestFactory().get("/")
         request.user = SimpleNamespace(is_authenticated=True, is_superuser=True, username="demo")
@@ -129,3 +136,18 @@ class TaskNavigationViewTests(TestCase):
         self.assertContains(unavailable, "不会再次执行", status_code=503)
         self.assertContains(unavailable, 'href="/audit/"', status_code=503)
         self.assertIn("no-store", unavailable["Cache-Control"])
+
+    @patch("dashboard.views.change_task")
+    def test_rule_task_and_later_outage_return_to_standalone_rules_page(self, read_task):
+        read_task.return_value = {
+            "id": TASK_ID, "action": "network.subscription_rules.change", "state": "succeeded",
+            "terminal": True, "preview": {"title": "保存订阅规则"},
+        }
+        response = self.client.get(f"/tasks/{TASK_ID}/")
+        self.assertContains(response, "← 返回直连与 DNS")
+        self.assertContains(response, 'href="/network/subscription-rules/"')
+        read_task.side_effect = AgentError("Unavailable", "agent_error")
+        unavailable = self.client.get(f"/tasks/{TASK_ID}/")
+        self.assertContains(unavailable, "← 返回直连与 DNS", status_code=503)
+        self.assertContains(unavailable, 'href="/network/subscription-rules/"', status_code=503)
+        self.assertNotContains(unavailable, "#subscription-rules", status_code=503)

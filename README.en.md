@@ -97,7 +97,7 @@ Permissions and recent handshakes **do not prove live connectivity**. Arrows poi
 | VLESS / Clash / files / Mosh | **部署向导** (Setup guide); first Clash setup needs VLESS REALITY + upstream URL + exit configuration |
 | New VPS IP | **域名管理** (Domains): stable hostname + DNSPod / DuckDNS; [recovery steps](docs/public-ip-change-runbook.md) |
 | Business DNS through an exit | [Exit-consistent DNS](docs/operations.md#出口一致-dns); IP location labels may still differ |
-| Custom direct / DNS rules | **域名管理 → 指定直连与 DNS**; edit rules together, save, then refresh the client subscription |
+| Custom direct / DNS rules | **直连与 DNS** (Direct / DNS): edit rules together, save, then refresh the client subscription |
 | SSH / firewall | **安全事务** (Security); high-risk actions may be preview-only; pass [safety checks](docs/management-plane-design.md) before enabling; test a second connection before confirming |
 | Encrypted backups / audit | **配置备份 / 任务与审计**; save the recovery password separately |
 

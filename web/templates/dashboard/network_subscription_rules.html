@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% load static %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'subscription_rules.css' %}"><script src="{% static 'inline_tasks.js' %}" defer></script><script src="{% static 'subscription_rules.js' %}" defer></script>{% endblock %}
+{% block title %}直连与 DNS · moonsage{% endblock %}
+{% block body %}
+{% include "dashboard/_inline_task_modal.html" %}
+<div class="app-shell">
+  {% include "dashboard/_navigation.html" %}
+  <main id="main-content" tabindex="-1" class="content detail-content">
+    <header class="page-header"><div><p class="eyebrow">ROUTING</p><h1>直连与 DNS</h1><p class="muted">按域名或网段指定直连，按域名设置 DNS。</p></div></header>
+    {% include "dashboard/_messages.html" %}
+    {% if snapshot_error %}<div class="alert danger" role="alert">{{ snapshot_error }}</div>{% endif %}
+    {% if not subscription_rules_error and not snapshot_error %}<span hidden data-inline-ready="subscription-rules"></span>{% endif %}
+    {% include "dashboard/_subscription_rules.html" %}
+  </main>
+</div>
+{% endblock %}

@@ -37,7 +37,8 @@ class SubscriptionRulesUITests(TestCase):
 
     def setUp(self):
         self.client.force_login(self.admin)
-        self.url = reverse("network-subscriptions")
+        self.url = reverse("network-subscription-rules")
+        self.domains_url = reverse("network-subscriptions")
         self.preview_url = reverse("network-subscription-rules-preview")
         self.execute_url = reverse("network-subscription-rules-execute")
         self.status = self.mock("subscription_rules_status", return_value=copy.deepcopy(RULES))
@@ -45,9 +46,9 @@ class SubscriptionRulesUITests(TestCase):
         self.read_task = self.mock("change_task", return_value=copy.deepcopy(TASK))
         self.confirm = self.mock("confirm_change_task", return_value={**TASK, "state": "queued"})
         self.overview = self.mock("network_overview", return_value={"nodes": [], "writes_enabled": True})
-        self.mock("public_endpoint_status", return_value={"fqdn": ""})
-        self.mock("public_endpoint_transaction_status", return_value={"state": "idle"})
-        self.mock("duckdns_status", return_value={})
+        self.endpoint = self.mock("public_endpoint_status", return_value={"fqdn": ""})
+        self.endpoint_transaction = self.mock("public_endpoint_transaction_status", return_value={"state": "idle"})
+        self.duckdns = self.mock("duckdns_status", return_value={})
 
     def mock(self, name, **kwargs):
         patcher = patch("dashboard.views." + name, **kwargs)
@@ -67,11 +68,33 @@ class SubscriptionRulesUITests(TestCase):
     def test_page_has_scoped_forms_and_persistence_explanation(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "dashboard/network_subscription_rules.html")
+        self.assertEqual(response.context["active_page"], "subscription-rules")
+        self.assertContains(response, "<h1>直连与 DNS</h1>", html=True)
         for text in ("指定直连 / 指定 DNS", "规则独立保存在 VPS", "不进入 Git 仓库", "保存后请在客户端刷新订阅", "不修改 Xray 服务端强制 DNS", "data-rules-form", "data-rule-template", 'value="' + REVISION + '"'):
             self.assertContains(response, text)
+        self.assertNotContains(response, "稳定公网入口")
+        self.assertNotContains(response, "全局订阅强制解析")
+        self.endpoint.assert_not_called()
+        self.endpoint_transaction.assert_not_called()
+        self.duckdns.assert_not_called()
+        self.assertIn("no-store", response["Cache-Control"])
+
+    def test_domains_page_links_to_rules_without_loading_or_rendering_editor(self):
+        self.status.side_effect = AgentError("rules backend unavailable")
+        response = self.client.get(self.domains_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["active_page"], "subscriptions")
+        self.assertContains(response, 'href="' + self.url + '"')
+        self.assertContains(response, "直连与 DNS")
         self.assertContains(response, "稳定公网入口")
         self.assertContains(response, "全局订阅强制解析")
-        self.assertIn("no-store", response["Cache-Control"])
+        self.assertNotContains(response, "data-rules-form")
+        self.assertNotContains(response, "data-rule-template")
+        self.assertNotContains(response, "data-subscription-rules")
+        self.assertNotContains(response, "subscription_rules.js")
+        self.assertNotContains(response, "subscription_rules.css")
+        self.status.assert_not_called()
 
     def test_viewer_can_read_but_not_edit(self):
         self.client.force_login(self.viewer)
@@ -89,6 +112,23 @@ class SubscriptionRulesUITests(TestCase):
         self.overview.return_value["writes_enabled"] = False
         self.assertNotContains(self.client.get(self.url), "data-rules-form")
 
+    def test_unknown_write_capability_fails_closed_but_keeps_rules_readable(self):
+        for value in ({}, None, [], {"writes_enabled": "true"}, {"writes_enabled": 1}):
+            with self.subTest(value=value):
+                self.overview.return_value = value
+                response = self.client.get(self.url)
+                self.assertContains(response, "暂时无法读取编辑权限")
+                self.assertContains(response, "direct.example.com")
+                self.assertNotContains(response, "data-rules-form")
+                self.assertNotContains(response, 'data-inline-ready="subscription-rules"')
+        self.overview.side_effect = AgentError("private capability error")
+        response = self.client.get(self.url)
+        self.assertContains(response, "暂时无法读取编辑权限")
+        self.assertNotContains(response, "private capability error")
+        self.assertNotContains(response, "data-rules-form")
+        self.endpoint.assert_not_called()
+        self.duckdns.assert_not_called()
+
     def test_status_error_hides_editor_without_faking_empty_rules(self):
         for result in ({}, {**RULES, "revision": None}, {**RULES, "direct_rules": None},
                        {**RULES, "dns_rules": [{}]}, {**RULES, "dns_rules": [{**RULES["dns_rules"][0], "servers": ["https://dns.example.com/dns-query"]}]}):
@@ -98,7 +138,12 @@ class SubscriptionRulesUITests(TestCase):
             self.assertContains(response, 'data-rules-ready="false"')
             self.assertNotContains(response, "data-rules-form")
         self.status.side_effect = AgentError("private socket path")
-        self.assertNotContains(self.client.get(self.url), "private socket path")
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "private socket path")
+        self.assertContains(response, 'href="' + self.url + '"')
+        self.assertContains(response, "现有规则不会清除")
+        self.assertNotContains(response, "data-rules-form")
+        self.assertNotContains(response, 'href="' + self.domains_url + '#subscription-rules"')
 
     def test_all_rules_normalized_in_one_preview_with_revision(self):
         response = self.client.post(self.preview_url, self.data())
@@ -111,6 +156,9 @@ class SubscriptionRulesUITests(TestCase):
         ], "route": "PROXY"}], "rules-admin", REVISION)
         self.assertContains(response, 'id="inline-task-preview"')
         self.assertContains(response, self.execute_url)
+        self.assertEqual(response.context["active_page"], "subscription-rules")
+        self.assertContains(response, 'href="' + self.url + '"')
+        self.assertNotContains(response, 'href="' + self.domains_url + '#subscription-rules"')
         self.confirm.assert_not_called()
 
     def test_empty_lists_are_explicit_clear_not_missing_form(self):
@@ -199,6 +247,7 @@ class SubscriptionRulesUITests(TestCase):
         self.assertEqual(self.client.get(self.preview_url).status_code, 405)
         self.assertEqual(self.client.get(self.execute_url).status_code, 405)
         self.client.logout()
+        self.assertEqual(self.client.get(self.url).status_code, 302)
         self.assertEqual(self.client.post(self.preview_url, self.data()).status_code, 302)
         self.preview.assert_not_called()
         self.confirm.assert_not_called()
@@ -225,8 +274,9 @@ class SubscriptionRulesUITests(TestCase):
             self.assertEqual(response.status_code, 200)
             confirm.assert_called_once_with(TASK_ID, "rules-admin")
 
-    def test_task_origin_returns_to_rules_section(self):
-        self.assertEqual(task_navigation_context(TASK, {}, TASK_ID)["task_origin"]["url"], self.url + "#subscription-rules")
+    def test_task_origin_returns_to_standalone_rules_page(self):
+        origin = task_navigation_context(TASK, {}, TASK_ID)["task_origin"]
+        self.assertEqual(origin, {"url": self.url, "label": "直连与 DNS"})
 
     @patch("dashboard.services.AgentClient")
     def test_service_protocol_forwards_only_settings_actor_and_revision(self, client):

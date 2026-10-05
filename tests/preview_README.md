@@ -35,12 +35,17 @@ node tests/run_login_ui.cjs http://127.0.0.1:8765/
 node tests/run_exit_edit_ui.cjs http://127.0.0.1:8765/
 node tests/run_topology_ui.cjs http://127.0.0.1:8765/
 node tests/run_telemetry_ui.cjs http://127.0.0.1:8765/
+node tests/run_subscription_rules_ui.cjs http://127.0.0.1:8765/
 ```
 
-It signs in with the demo account, captures all 42 routes at 320, 390, 768 and
+It signs in with the demo account, captures the preview route inventory at 320, 390, 768 and
 1440 pixels, checks page overflow, headings and button bounds, and writes PNGs plus `report.json`
 to a new temporary directory. All non-preview-origin requests are blocked.
 Inspect screenshots too: automated checks cannot judge visual hierarchy.
+
+The custom-rule suite checks the standalone **直连与 DNS** page, desktop/mobile
+navigation, read-only access, batch save/delete, draft cancellation and same-page
+completion in Chromium and WebKit. Rule data and tasks are synthetic and in-memory.
 
 The three button-layout suites also use WebKit and expanded forms. They cover
 confirmation pages, task states, rollback previews and short-screen dialogs,

@@ -63,6 +63,7 @@ urlpatterns = [
     path("network/permissions/batch/execute/", views.network_permission_batch_execute, name="network-permission-batch-execute"),
     path("network/permissions/batch/<str:task_id>/", views.network_permission_batch_status, name="network-permission-batch-status"),
     path("network/subscriptions/", views.network_subscriptions, name="network-subscriptions"),
+    path("network/subscription-rules/", views.network_subscription_rules, name="network-subscription-rules"),
     path("network/subscription-rules/preview/", views.network_subscription_rules_preview, name="network-subscription-rules-preview"),
     path("network/subscription-rules/execute/", views.network_subscription_rules_execute, name="network-subscription-rules-execute"),
     path("network/proxy/", views.network_proxy_resources, name="network-proxy-resources"),

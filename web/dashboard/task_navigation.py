@@ -17,7 +17,7 @@ _DESTINATIONS = {
     "nodes": ("network-nodes", "内网节点", ""),
     "proxy": ("network-proxy-resources", "代理资源", ""),
     "domains": ("network-subscriptions", "域名管理", "#host-records"),
-    "subscription-rules": ("network-subscriptions", "域名管理", "#subscription-rules"),
+    "subscription-rules": ("network-subscription-rules", "直连与 DNS", ""),
     "endpoint": ("network-subscriptions", "域名管理", "#public-endpoint"),
     "ddns": ("network-subscriptions", "域名管理", "#dynamic-dns"),
     "files": ("file-resources", "文件资源", ""),

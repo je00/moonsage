@@ -159,7 +159,7 @@
     try {
       const doc = await request(window.location.href);
       if (!doc.querySelector("#main-content") || doc.querySelector(".content > .alert.danger")) throw new Error("最新列表读取失败，原列表未覆盖。");
-      const ready = {"/network/nodes/": "nodes", "/network/subscriptions/": "domains", "/network/proxy/": "proxy"}[window.location.pathname];
+      const ready = {"/network/nodes/": "nodes", "/network/subscriptions/": "domains", "/network/subscription-rules/": "subscription-rules", "/network/proxy/": "proxy"}[window.location.pathname];
       if (!ready || !doc.querySelector(`[data-inline-ready="${ready}"]`)) throw new Error("最新列表不完整，原列表未覆盖。请稍后重新读取。");
       if (flow.config.key === "subscription-rules" && !doc.querySelector('[data-subscription-rules][data-rules-ready="true"]')) throw new Error("规则状态读取失败，原编辑内容未覆盖。请稍后重新读取。");
       const before = regions(document), after = regions(doc);

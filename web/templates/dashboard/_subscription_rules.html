@@ -1,7 +1,7 @@
 <section id="subscription-rules" class="inventory-panel subscription-rules" data-subscription-rules data-inline-key="subscription-rules" data-rules-ready="{% if subscription_rules_error %}false{% else %}true{% endif %}">
   <div class="section-heading"><div><p class="eyebrow">CLASH / STASH</p><h2>指定直连 / 指定 DNS</h2></div><span class="stage-badge">私有设置</span></div>
   {% if subscription_rules_error %}
-  <div class="alert danger" role="alert">暂时无法读取规则，已禁止覆盖。现有规则不会清除。</div><a class="secondary-button" href="{% url 'network-subscriptions' %}#subscription-rules">重新加载</a>
+  <div class="alert danger" role="alert">暂时无法读取规则，已禁止覆盖。现有规则不会清除。</div><a class="secondary-button" href="{% url 'network-subscription-rules' %}">重新加载</a>
   {% else %}
   <p class="muted">规则独立保存在 VPS，重新克隆、升级不会覆盖，不进入 Git 仓库。</p>
   {% if network.writes_enabled and request.user.is_superuser or network.writes_enabled and request.user.is_staff %}

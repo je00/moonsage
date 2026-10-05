@@ -3,11 +3,11 @@
 {% block body %}
 {{ task|json_script:"inline-task-preview" }}
 <div class="app-shell">{% include "dashboard/_navigation.html" %}<main id="main-content" tabindex="-1" class="content detail-content">
-  <a class="back-link" href="{% url 'network-subscriptions' %}#subscription-rules">← 返回指定直连 / DNS</a>
+  <a class="back-link" href="{% url 'network-subscription-rules' %}">← 返回直连与 DNS</a>
   <header class="page-header"><div><p class="eyebrow">变更预览</p><h1>{{ task.preview.title }}</h1><p class="muted">{{ task.preview.summary }}</p></div><span class="stage-badge">{{ task.state_label }}</span></header>
   <section class="inventory-panel"><dl class="fact-grid">{% for label, value in task.preview.facts.items %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}</dl>
     <p class="alert neutral">确认后保存私有规则并刷新生成的订阅；客户端需刷新订阅。不修改 Xray 服务端强制 DNS，不重启 AWG、SSH 或 Xray。</p>
-    <form class="confirm-actions" method="post" action="{% url 'network-subscription-rules-execute' %}">{% csrf_token %}<input type="hidden" name="task_id" value="{{ task.id }}"><a class="secondary-button" href="{% url 'network-subscriptions' %}#subscription-rules">返回编辑</a><button class="action-button" type="submit">确认保存</button></form>
+    <form class="confirm-actions" method="post" action="{% url 'network-subscription-rules-execute' %}">{% csrf_token %}<input type="hidden" name="task_id" value="{{ task.id }}"><a class="secondary-button" href="{% url 'network-subscription-rules' %}">返回编辑</a><button class="action-button" type="submit">确认保存</button></form>
   </section>
 </main></div>
 {% endblock %}

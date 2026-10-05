@@ -540,14 +540,28 @@ def network_notice_dismiss(request):
 @never_cache
 def network_subscriptions(request):
     """集中管理稳定入口、动态 DNS 和全局强制解析。"""
-    context = _network_context(request, "subscriptions")
+    return render(request, "dashboard/network_subscriptions.html", _network_context(request, "subscriptions"))
+
+
+@login_required
+@never_cache
+def network_subscription_rules(request):
+    """独立编辑客户端分流规则，不加载无关的 DDNS 和入口事务。"""
+    context = {"active_page": "subscription-rules", "network": {"writes_enabled": False}}
+    try:
+        overview = network_overview()
+        if not isinstance(overview, dict) or type(overview.get("writes_enabled")) is not bool:
+            raise ValueError("Unknown write capability")
+        context["network"]["writes_enabled"] = overview["writes_enabled"]
+    except (AgentError, OSError, ValueError, TypeError):
+        context["snapshot_error"] = "暂时无法读取编辑权限，当前仅可查看规则，请稍后重新加载。"
     try:
         rules = _checked_subscription_rules_status(subscription_rules_status())
     except (AgentError, OSError, ValueError, TypeError):
         context["subscription_rules_error"] = True
     else:
         context["subscription_rules"] = rules
-    return render(request, "dashboard/network_subscriptions.html", context)
+    return render(request, "dashboard/network_subscription_rules.html", context)
 
 
 def _checked_subscription_rules_status(rules):
@@ -614,7 +628,7 @@ def network_subscription_rules_preview(request):
         return HttpResponse("暂时无法生成预览，原规则未更改，请稍后重试。", status=503)
     except OSError:
         return HttpResponse("暂时无法生成预览，原规则未更改，请稍后重试。", status=503)
-    return render(request, "dashboard/subscription_rules_confirm.html", {"task": task, "active_page": "subscriptions"})
+    return render(request, "dashboard/subscription_rules_confirm.html", {"task": task, "active_page": "subscription-rules"})
 
 
 @login_required

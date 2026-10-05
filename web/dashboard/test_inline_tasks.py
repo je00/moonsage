@@ -90,6 +90,6 @@ class InlineTaskTests(TestCase):
         self.confirm.assert_not_called()
 
     def test_all_allowlisted_task_types_supported(self):
-        for action in ("network.node.domains", "network.address.domains", "network.proxy.update", "network.permission.deny"):
+        for action in ("network.node.domains", "network.address.domains", "network.proxy.update", "network.permission.deny", "network.subscription_rules.change"):
             self.read.return_value = {**TASK, "action": action}
             self.assertEqual(self.post().status_code, 200)

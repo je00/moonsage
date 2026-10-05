@@ -7,6 +7,7 @@
     {% include "dashboard/_nav_link.html" with page="deploy" route="deployment-wizard" label="部署向导" %}
     <span class="nav-section-label">网络与资源</span>
     {% include "dashboard/_nav_link.html" with page="subscriptions" route="network-subscriptions" label="域名管理" %}
+    {% include "dashboard/_nav_link.html" with page="subscription-rules" route="network-subscription-rules" label="直连与 DNS" %}
     {% include "dashboard/_nav_link.html" with page="proxy" route="network-proxy-resources" label="代理资源" %}
     {% include "dashboard/_nav_link.html" with page="files" route="file-resources" label="文件资源" %}
     <span class="nav-section-label">系统管理</span>
@@ -33,6 +34,7 @@
       <div class="mobile-menu-links">
         {% include "dashboard/_nav_link.html" with page="deploy" route="deployment-wizard" label="部署向导" %}
         {% include "dashboard/_nav_link.html" with page="subscriptions" route="network-subscriptions" label="域名管理" %}
+        {% include "dashboard/_nav_link.html" with page="subscription-rules" route="network-subscription-rules" label="直连与 DNS" %}
         {% include "dashboard/_nav_link.html" with page="files" route="file-resources" label="文件资源" %}
         {% include "dashboard/_nav_link.html" with page="security" route="security-transactions" label="安全事务" %}
         {% if request.user.is_superuser %}{% include "dashboard/_nav_link.html" with page="backups" route="backups" label="配置备份" %}{% endif %}
